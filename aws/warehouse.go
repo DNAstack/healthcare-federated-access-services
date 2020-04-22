@@ -145,6 +145,7 @@ func (wh *AccountWarehouse) RemoveServiceAccount(ctx context.Context, project, a
 //This method is the main method where key removal happens
 func (wh *AccountWarehouse) ManageAccountKeys(ctx context.Context, project, accountID string, ttl, maxKeyTTL time.Duration, now time.Time, keysPerAccount int64) (int, int, error) {
 	//TODO: Get service account keys
+	fmt.Printf("ACCOUNT ID: %v", accountID)
 	expired := now.Add(-1 * maxKeyTTL).Format(time.RFC3339)
 	sess, err := createSession()
 	if err != nil {
@@ -165,7 +166,14 @@ func (wh *AccountWarehouse) ManageAccountKeys(ctx context.Context, project, acco
 	for _, key := range keys {
 		t := timeutil.TimestampProto(aws.TimeValue(key.CreateDate))
 		if timeutil.RFC3339(t) < expired {
-			// delete key
+			// TODO: Remove comments when deletion doubt is clear
+			//_, err := svc.DeleteAccessKey(&iam.DeleteAccessKeyInput{
+			//	AccessKeyId: key.AccessKeyId,
+			//	UserName:    aws.String(accountID),
+			//})
+			//if err !=nil {
+			//	return active, len(keys) - active, fmt.Errorf("error deleting access key: %v", err)
+			//}
 			fmt.Printf("Expired key: %v \n", key)
 			active--
 			continue

@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	keyScheduleFrequency    = time.Minute //FIXME Before merging, updating this for testing
+	keyScheduleFrequency    = time.Hour
 	maxKeyScheduleFrequency = 12 * time.Hour
 )
 
@@ -88,7 +88,6 @@ func (k *KeyGc) ProcessActiveWork(ctx context.Context, state *pb.Process, workNa
 	}
 
 	for a := range accounts  {
-		//TODO: Implement this
 		fmt.Printf("Process work Inside account: %v \n", a.DisplayName)
 		process.AddWorkStats(1, "accounts", workName, state)
 		keyTTL := work.Params.IntParams["keyTtl"]
