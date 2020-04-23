@@ -162,7 +162,7 @@ func (wh *AccountWarehouse) MintTokenWithTTL(ctx context.Context, id string, ttl
 	if ttl > maxAccessTokenTTL || httputils.IsJSON(params.TokenFormat) {
 		return wh.GetAccountKey(ctx, id, ttl, maxTTL, numKeys, params)
 	}
-	return wh.GetAccessToken(ctx, id, params)
+	return wh.GetAccessToken(ctx, id, ttl, params)
 }
 
 // GetTokenMetadata returns an access token based on its key.
@@ -249,7 +249,7 @@ func (wh *AccountWarehouse) GetAccountKey(ctx context.Context, id string, ttl, m
 		numKeys = defaultKeysPerAccount
 	}
 
-	email, err := wh.configureBackingAccount(ctx, id, params)
+	email, err := wh.configureBackingAccount(ctx, id, ttl, params)
 	if err != nil {
 		return nil, fmt.Errorf("configuring backing account: %v", err)
 	}
@@ -269,18 +269,14 @@ func (wh *AccountWarehouse) GetAccountKey(ctx context.Context, id string, ttl, m
 	if !httputils.IsJSON(params.TokenFormat) {
 		return &clouds.ResourceTokenResult{
 			Account: email,
-			Token:   string(key.PrivateKeyData),
+			Token:   base64.StdEncoding.EncodeToString(key.PrivateKeyData),
 			Format:  "base64",
 		}, nil
 	}
 
-	bytes, err := base64.StdEncoding.DecodeString(string(key.PrivateKeyData))
-	if err != nil {
-		return nil, fmt.Errorf("decoding key: %v", err)
-	}
 	return &clouds.ResourceTokenResult{
 		Account: email,
-		Token:   string(bytes),
+		Token:   string(key.PrivateKeyData),
 		Format:  params.TokenFormat,
 	}, nil
 }
@@ -337,8 +333,8 @@ func (wh *AccountWarehouse) ManageAccountKeys(ctx context.Context, project, emai
 
 // GetAccessToken returns an access token for the service account uniquely
 // associated with id.
-func (wh *AccountWarehouse) GetAccessToken(ctx context.Context, id string, params *clouds.ResourceTokenCreationParams) (*clouds.ResourceTokenResult, error) {
-	email, err := wh.configureBackingAccount(ctx, id, params)
+func (wh *AccountWarehouse) GetAccessToken(ctx context.Context, id string, ttl time.Duration, params *clouds.ResourceTokenCreationParams) (*clouds.ResourceTokenResult, error) {
+	email, err := wh.configureBackingAccount(ctx, id, ttl, params)
 	if err != nil {
 		return nil, fmt.Errorf("getting backing account: %v", err)
 	}
@@ -401,12 +397,12 @@ func (wh *AccountWarehouse) RemoveServiceAccount(ctx context.Context, project, i
 	return wh.iam.DeleteServiceAccount(ctx, &iampb.DeleteServiceAccountRequest{Name: name})
 }
 
-func (wh *AccountWarehouse) configureBackingAccount(ctx context.Context, id string, params *clouds.ResourceTokenCreationParams) (string, error) {
+func (wh *AccountWarehouse) configureBackingAccount(ctx context.Context, id string, ttl time.Duration, params *clouds.ResourceTokenCreationParams) (string, error) {
 	email, err := wh.getOrCreateBackingAccount(ctx, id, params)
 	if err != nil {
 		return "", err
 	}
-	if err := wh.configureRoles(ctx, email, params); err != nil {
+	if err := wh.configureRoles(ctx, email, params, ttl); err != nil {
 		return "", fmt.Errorf("configuring role for existing account: %v", err)
 	}
 	return email, nil
@@ -446,7 +442,7 @@ type backoffState struct {
 }
 
 // configureRoles applys the changes to policies on IAM, CRM, and GCS for a ResourceTokenCreationParams.
-func (wh *AccountWarehouse) configureRoles(ctx context.Context, email string, params *clouds.ResourceTokenCreationParams) error {
+func (wh *AccountWarehouse) configureRoles(ctx context.Context, email string, params *clouds.ResourceTokenCreationParams, ttl time.Duration) error {
 	// prMap: map[<projectResourceName>][]<role> stores project-level IAM configurations.
 	// bktMap: map[<bucketName>][]<role> stores GCS bucket-level IAM configurations.
 	// bqMap: map[<projectResourceName>]map[<datasetID>][]<role> stores BigQuery dataset-level IAM configurations.
@@ -456,7 +452,9 @@ func (wh *AccountWarehouse) configureRoles(ctx context.Context, email string, pa
 	}
 
 	for project, roles := range prMap {
-		f := func() error { return applyCRMChange(ctx, wh.crm, email, project, roles, &backoffState{}) }
+		f := func() error {
+			return applyCRMChange(ctx, wh.crm, email, project, roles, ttl, &backoffState{})
+		}
 		if err := backoff.Retry(f, exponentialBackoff); err != nil {
 			return err
 		}
@@ -464,7 +462,7 @@ func (wh *AccountWarehouse) configureRoles(ctx context.Context, email string, pa
 
 	for bkt, roles := range bktMap {
 		f := func() error {
-			return applyGCSChange(ctx, wh.gcs, email, bkt, roles, params.BillingProject, &backoffState{})
+			return applyGCSChange(ctx, wh.gcs, email, bkt, roles, params.BillingProject, ttl, &backoffState{})
 		}
 		if err := backoff.Retry(f, exponentialBackoff); err != nil {
 			return err

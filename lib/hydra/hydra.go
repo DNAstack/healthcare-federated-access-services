@@ -26,7 +26,10 @@ import (
 	"google.golang.org/grpc/codes" /* copybara-comment */
 	"google.golang.org/grpc/status" /* copybara-comment */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/apis/hydraapi" /* copybara-comment: hydraapi */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/errutil" /* copybara-comment: errutil */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/httputils" /* copybara-comment: httputils */
+
+	glog "github.com/golang/glog" /* copybara-comment */
 )
 
 // GetLoginRequest fetches information on a login request.
@@ -127,7 +130,7 @@ func Introspect(client *http.Client, hydraAdminURL, token string) (*hydraapi.Int
 
 	req, err := http.NewRequest(http.MethodPost, u, strings.NewReader(data.Encode()))
 	if err != nil {
-		return nil, err
+		return nil, status.Errorf(codes.Internal, "http.NewRequest for Introspect failed to initialize: %v", err)
 	}
 
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
@@ -135,7 +138,7 @@ func Introspect(client *http.Client, hydraAdminURL, token string) (*hydraapi.Int
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, status.Errorf(codes.Unavailable, "Introspect to hydra failed: %v", err)
 	}
 	defer resp.Body.Close()
 
@@ -223,13 +226,25 @@ func httpResponse(resp *http.Response, response interface{}) error {
 	if httputils.IsHTTPError(resp.StatusCode) {
 		gErr := &hydraapi.GenericError{}
 		if err := httputils.DecodeJSON(resp.Body, gErr); err != nil {
-			return err
+			return status.Errorf(codes.Internal, "DecodeJSON() failed: %v", err)
 		}
 		// TODO: figure out what error from hydra should handle.
-		return gErr
+		glog.Errorf("error from hydra: %v, debug info: %s", gErr, gErr.Debug)
+		return toStatusErr(gErr)
 	}
 
 	return httputils.DecodeJSON(resp.Body, response)
+}
+
+func toStatusErr(err *hydraapi.GenericError) error {
+	reason := ""
+	if err.Name != nil {
+		reason = *err.Name
+	}
+	return errutil.WithErrorReason(
+		reason,
+		status.Errorf(httputils.RPCCode(int(err.Code)), err.Description),
+	)
 }
 
 func httpPut(client *http.Client, url string, request interface{}, response interface{}) error {
@@ -240,7 +255,7 @@ func httpPut(client *http.Client, url string, request interface{}, response inte
 
 	req, err := http.NewRequest(http.MethodPut, url, bytes.NewBuffer(body))
 	if err != nil {
-		return err
+		return status.Errorf(codes.Internal, "http.NewRequest for httpPut failed to initialize: %v", err)
 	}
 
 	req.Header.Add("Content-Type", "application/json")
@@ -248,7 +263,7 @@ func httpPut(client *http.Client, url string, request interface{}, response inte
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return status.Errorf(codes.Unavailable, "httpPut to hydra failed: %v", err)
 	}
 	defer resp.Body.Close()
 
@@ -263,7 +278,7 @@ func httpPostJSON(client *http.Client, url string, request interface{}, response
 
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(body))
 	if err != nil {
-		return err
+		return status.Errorf(codes.Internal, "http.NewRequest for httpPostJSON failed to initialize: %v", err)
 	}
 
 	req.Header.Add("Content-Type", "application/json")
@@ -271,7 +286,7 @@ func httpPostJSON(client *http.Client, url string, request interface{}, response
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return status.Errorf(codes.Unavailable, "httpPostJSON to hydra failed: %v", err)
 	}
 	defer resp.Body.Close()
 
@@ -281,7 +296,7 @@ func httpPostJSON(client *http.Client, url string, request interface{}, response
 func httpDelete(client *http.Client, url string) error {
 	req, err := http.NewRequest(http.MethodDelete, url, nil)
 	if err != nil {
-		return err
+		return status.Errorf(codes.Internal, "http.NewRequest for httpDelete failed to initialize: %v", err)
 	}
 
 	req.Header.Add("Content-Type", "application/json")
@@ -289,7 +304,7 @@ func httpDelete(client *http.Client, url string) error {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return status.Errorf(codes.Unavailable, "httpDelete to hydra failed: %v", err)
 	}
 	defer resp.Body.Close()
 
@@ -302,7 +317,7 @@ func httpDelete(client *http.Client, url string) error {
 func httpGet(client *http.Client, url string, response interface{}) error {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		return err
+		return status.Errorf(codes.Internal, "http.NewRequest for httpGet failed to initialize: %v", err)
 	}
 
 	req.Header.Add("Content-Type", "application/json")
@@ -310,7 +325,7 @@ func httpGet(client *http.Client, url string, response interface{}) error {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return status.Errorf(codes.Unavailable, "httpGet to hydra failed: %v", err)
 	}
 	defer resp.Body.Close()
 

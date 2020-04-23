@@ -1369,8 +1369,8 @@ func TestLogin_Hydra_Success(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			resp := sendLogin(s, cfg, h, tc.authParams, nil)
-			if resp.StatusCode != http.StatusTemporaryRedirect {
-				t.Errorf("resp.StatusCode wants %d, got %d", http.StatusTemporaryRedirect, resp.StatusCode)
+			if resp.StatusCode != http.StatusSeeOther {
+				t.Errorf("resp.StatusCode wants %d, got %d", http.StatusSeeOther, resp.StatusCode)
 			}
 
 			idpc := cfg.TrustedIssuers[s.defaultBroker]
@@ -1514,8 +1514,8 @@ func TestLogin_Hydra_Error(t *testing.T) {
 			h.RejectLoginResp = &hydraapi.RequestHandlerResponse{RedirectTo: hydraPublicURL}
 
 			resp := sendLogin(s, cfg, h, tc.authParams, nil)
-			if resp.StatusCode != http.StatusTemporaryRedirect {
-				t.Errorf("StatusCode = %d, wants %d", resp.StatusCode, http.StatusTemporaryRedirect)
+			if resp.StatusCode != http.StatusSeeOther {
+				t.Errorf("StatusCode = %d, wants %d", resp.StatusCode, http.StatusSeeOther)
 			}
 
 			if h.RejectLoginReq.Code != tc.errCode {
@@ -1532,8 +1532,8 @@ func TestLogin_LoginHint_Hydra_Success(t *testing.T) {
 	}
 
 	resp := sendLogin(s, cfg, h, "login_hint=idp:foo@bar.com", []string{"openid", "identities", "offline"})
-	if resp.StatusCode != http.StatusTemporaryRedirect {
-		t.Errorf("resp.StatusCode wants %d, got %d", http.StatusTemporaryRedirect, resp.StatusCode)
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Errorf("resp.StatusCode wants %d, got %d", http.StatusSeeOther, resp.StatusCode)
 	}
 
 	idpc := cfg.TrustedIssuers[s.defaultBroker]
@@ -1572,8 +1572,8 @@ func TestLogin_Endpoint_Hydra_Success(t *testing.T) {
 	}
 
 	resp := sendLogin(s, cfg, h, "", []string{"openid", "identities", "offline"})
-	if resp.StatusCode != http.StatusTemporaryRedirect {
-		t.Errorf("resp.StatusCode wants %d, got %d", http.StatusTemporaryRedirect, resp.StatusCode)
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Errorf("resp.StatusCode wants %d, got %d", http.StatusSeeOther, resp.StatusCode)
 	}
 
 	idpc := cfg.TrustedIssuers[s.defaultBroker]
@@ -1619,7 +1619,7 @@ func TestLogin_Endpoint_Hydra_Success(t *testing.T) {
 	}
 }
 
-func sendLoggedIn(t *testing.T, s *Service, cfg *pb.DamConfig, h *fakehydra.Server, code, state string, tokenType pb.ResourceTokenRequestState_TokenType) *http.Response {
+func sendLoggedIn(t *testing.T, s *Service, cfg *pb.DamConfig, h *fakehydra.Server, code, errStr, state string, tokenType pb.ResourceTokenRequestState_TokenType) *http.Response {
 	t.Helper()
 
 	// Ensure login state exists before request.
@@ -1649,10 +1649,20 @@ func sendLoggedIn(t *testing.T, s *Service, cfg *pb.DamConfig, h *fakehydra.Serv
 	h.AcceptLoginResp = &hydraapi.RequestHandlerResponse{RedirectTo: hydraPublicURL}
 
 	// Send Request.
-	query := fmt.Sprintf("?code=%s&state=%s", code, state)
-	u := damURL + loggedInPath + query
+	u := damURL + loggedInPath
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, u, nil)
+	v := url.Values{}
+	if len(code) > 0 {
+		v.Set("code", code)
+	}
+	if len(state) > 0 {
+		v.Set("state", state)
+	}
+	if len(errStr) > 0 {
+		v.Set("error", errStr)
+	}
+	r.URL.RawQuery = v.Encode()
 
 	s.Handler.ServeHTTP(w, r)
 
@@ -1667,10 +1677,10 @@ func TestLoggedIn_Hydra_Success(t *testing.T) {
 
 	pname := "dr_joe_elixir"
 
-	resp := sendLoggedIn(t, s, cfg, h, pname, loginStateID, pb.ResourceTokenRequestState_DATASET)
+	resp := sendLoggedIn(t, s, cfg, h, pname, "", loginStateID, pb.ResourceTokenRequestState_DATASET)
 
-	if resp.StatusCode != http.StatusTemporaryRedirect {
-		t.Errorf("resp.StatusCode wants %d got %d", http.StatusTemporaryRedirect, resp.StatusCode)
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Errorf("resp.StatusCode wants %d got %d", http.StatusSeeOther, resp.StatusCode)
 	}
 
 	l := resp.Header.Get("Location")
@@ -1720,7 +1730,7 @@ func TestLoggedIn_Hydra_Success_Log(t *testing.T) {
 
 	pname := "dr_joe_elixir"
 
-	sendLoggedIn(t, s, cfg, h, pname, loginStateID, pb.ResourceTokenRequestState_DATASET)
+	sendLoggedIn(t, s, cfg, h, pname, "", loginStateID, pb.ResourceTokenRequestState_DATASET)
 
 	logs.Client.Close()
 	got := logs.Server.Logs[0].Entries[0]
@@ -1749,7 +1759,7 @@ func TestLoggedIn_Hydra_Success_Log(t *testing.T) {
 	}
 }
 
-func TestLoggedIn_Hydra_Errors_no_challenge(t *testing.T) {
+func TestLoggedIn_Hydra_Errors_invalid_state(t *testing.T) {
 	s, cfg, _, h, _, err := setupHydraTest(true)
 	if err != nil {
 		t.Fatalf("setupHydraTest() failed: %v", err)
@@ -1764,22 +1774,22 @@ func TestLoggedIn_Hydra_Errors_no_challenge(t *testing.T) {
 		respStatus int
 	}{
 		{
-			name:       "no code",
-			code:       "",
-			stateID:    loginStateID,
+			name:       "no state",
+			code:       pname,
+			stateID:    "",
 			respStatus: http.StatusBadRequest,
 		},
 		{
 			name:       "stateID invalid",
 			code:       pname,
 			stateID:    "invalid",
-			respStatus: http.StatusServiceUnavailable,
+			respStatus: http.StatusBadRequest,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			resp := sendLoggedIn(t, s, cfg, h, tc.code, tc.stateID, pb.ResourceTokenRequestState_DATASET)
+			resp := sendLoggedIn(t, s, cfg, h, tc.code, "", tc.stateID, pb.ResourceTokenRequestState_DATASET)
 
 			if resp.StatusCode != tc.respStatus {
 				t.Errorf("resp.StatusCode wants %d got %d", tc.respStatus, resp.StatusCode)
@@ -1798,6 +1808,7 @@ func TestLoggedIn_Hydra_Errors_with_challenge(t *testing.T) {
 		name    string
 		code    string
 		stateID string
+		errStr  string
 		errCode int64
 	}{
 		{
@@ -1812,6 +1823,18 @@ func TestLoggedIn_Hydra_Errors_with_challenge(t *testing.T) {
 			stateID: loginStateID,
 			errCode: http.StatusForbidden,
 		},
+		{
+			name:    "no auth code",
+			code:    "",
+			stateID: loginStateID,
+			errCode: http.StatusBadRequest,
+		},
+		{
+			name:    "err upstream",
+			errStr:  "err",
+			stateID: loginStateID,
+			errCode: http.StatusUnauthorized,
+		},
 	}
 
 	for _, tc := range tests {
@@ -1819,10 +1842,10 @@ func TestLoggedIn_Hydra_Errors_with_challenge(t *testing.T) {
 			h.Clear()
 			h.RejectLoginResp = &hydraapi.RequestHandlerResponse{RedirectTo: hydraPublicURL}
 
-			resp := sendLoggedIn(t, s, cfg, h, tc.code, tc.stateID, pb.ResourceTokenRequestState_DATASET)
+			resp := sendLoggedIn(t, s, cfg, h, tc.code, tc.errStr, tc.stateID, pb.ResourceTokenRequestState_DATASET)
 
-			if resp.StatusCode != http.StatusTemporaryRedirect {
-				t.Errorf("StatusCode = %d, wants %d", resp.StatusCode, http.StatusTemporaryRedirect)
+			if resp.StatusCode != http.StatusSeeOther {
+				t.Errorf("StatusCode = %d, wants %d", resp.StatusCode, http.StatusSeeOther)
 			}
 
 			if h.RejectLoginReq.Code != tc.errCode {
@@ -1845,7 +1868,7 @@ func TestLoggedIn_Hydra_Error_Log(t *testing.T) {
 
 	pname := "dr_joe_era_commons"
 
-	sendLoggedIn(t, s, cfg, h, pname, loginStateID, pb.ResourceTokenRequestState_DATASET)
+	sendLoggedIn(t, s, cfg, h, pname, "", loginStateID, pb.ResourceTokenRequestState_DATASET)
 
 	logs.Client.Close()
 
@@ -1872,10 +1895,10 @@ func TestLoggedIn_Endpoint_Hydra_Success(t *testing.T) {
 
 	pname := "dr_joe_elixir"
 
-	resp := sendLoggedIn(t, s, cfg, h, pname, loginStateID, pb.ResourceTokenRequestState_ENDPOINT)
+	resp := sendLoggedIn(t, s, cfg, h, pname, "", loginStateID, pb.ResourceTokenRequestState_ENDPOINT)
 
-	if resp.StatusCode != http.StatusTemporaryRedirect {
-		t.Errorf("resp.StatusCode wants %d got %d", http.StatusTemporaryRedirect, resp.StatusCode)
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Errorf("resp.StatusCode wants %d got %d", http.StatusSeeOther, resp.StatusCode)
 	}
 
 	l := resp.Header.Get("Location")
@@ -1919,8 +1942,8 @@ func TestHydraConsent(t *testing.T) {
 
 	resp := w.Result()
 
-	if resp.StatusCode != http.StatusTemporaryRedirect {
-		t.Errorf("resp.StatusCode wants %d got %d", http.StatusTemporaryRedirect, resp.StatusCode)
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Errorf("resp.StatusCode wants %d got %d", http.StatusSeeOther, resp.StatusCode)
 	}
 
 	l := resp.Header.Get("Location")
@@ -1976,8 +1999,8 @@ func TestHydraConsent_Endpoint(t *testing.T) {
 
 	resp := w.Result()
 
-	if resp.StatusCode != http.StatusTemporaryRedirect {
-		t.Errorf("resp.StatusCode wants %d got %d", http.StatusTemporaryRedirect, resp.StatusCode)
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Errorf("resp.StatusCode wants %d got %d", http.StatusSeeOther, resp.StatusCode)
 	}
 
 	l := resp.Header.Get("Location")
@@ -2028,8 +2051,8 @@ func TestHydraConsent_Error(t *testing.T) {
 
 	resp := w.Result()
 
-	if resp.StatusCode != http.StatusTemporaryRedirect {
-		t.Errorf("resp.StatusCode = %d, wants %d", resp.StatusCode, http.StatusTemporaryRedirect)
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Errorf("resp.StatusCode = %d, wants %d", resp.StatusCode, http.StatusSeeOther)
 	}
 
 	if h.RejectConsentReq.Code != http.StatusBadRequest {
@@ -2681,9 +2704,8 @@ func TestConfigClients_Create_Hydra_Error(t *testing.T) {
 
 	resp := sendConfigClientsCreate(t, "admin", clientName, "master", test.TestClientID, test.TestClientSecret, cli, s, iss)
 
-	// TODO should use better http status.
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("resp.StatusCode = %d, wants %d", resp.StatusCode, http.StatusBadRequest)
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("resp.StatusCode = %d, wants %d", resp.StatusCode, http.StatusServiceUnavailable)
 	}
 
 	conf, err := s.loadConfig(nil, "master")
@@ -2906,9 +2928,8 @@ func TestConfigClients_Update_Hydra_Error(t *testing.T) {
 
 	resp := sendConfigClientsUpdate(t, "admin", clientName, "master", test.TestClientID, test.TestClientSecret, cli, s, iss)
 
-	// TODO should use better http status.
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("resp.StatusCode = %d, wants %d", resp.StatusCode, http.StatusBadRequest)
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("resp.StatusCode = %d, wants %d", resp.StatusCode, http.StatusServiceUnavailable)
 	}
 
 	conf, err := s.loadConfig(nil, "master")
@@ -3047,9 +3068,8 @@ func TestConfigClients_Delete_Hydra_Error(t *testing.T) {
 
 	resp := sendConfigClientsDelete(t, "admin", clientName, "master", test.TestClientID, test.TestClientSecret, s, iss)
 
-	// TODO should use better http status.
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("resp.StatusCode = %d, wants %d", resp.StatusCode, http.StatusBadRequest)
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("resp.StatusCode = %d, wants %d", resp.StatusCode, http.StatusServiceUnavailable)
 	}
 
 	conf, err := s.loadConfig(nil, "master")
@@ -3189,9 +3209,9 @@ func TestConfig_Hydra_Put_NotMasterRealmError(t *testing.T) {
 
 	// Call update config.
 	resp := damSendTestRequest(t, http.MethodPut, configPath, "", "test", pname, test.TestClientID, test.TestClientSecret, &pb.ConfigRequest{Item: cfg}, s, iss)
-	if resp.StatusCode != http.StatusBadRequest {
+	if resp.StatusCode != http.StatusForbidden {
 		body, _ := ioutil.ReadAll(resp.Body)
-		t.Fatalf("damSendTestRequest().StatusCode = %d, want %d\n body: %v", resp.StatusCode, http.StatusBadRequest, string(body))
+		t.Fatalf("damSendTestRequest().StatusCode = %d, want %d\n body: %v", resp.StatusCode, http.StatusForbidden, string(body))
 	}
 }
 

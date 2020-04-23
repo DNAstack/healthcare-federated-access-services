@@ -48,11 +48,7 @@ func (s *Service) HydraLogin(w http.ResponseWriter, r *http.Request) {
 
 	login, err := hydra.GetLoginRequest(s.httpClient, s.hydraAdminURL, challenge)
 	if err != nil {
-		httputils.WriteError(w, status.Errorf(codes.Unavailable, "%v", err))
-		return
-	}
-
-	if hydra.LoginSkip(w, r, s.httpClient, login, s.hydraAdminURL, challenge) {
+		httputils.WriteError(w, err)
 		return
 	}
 
@@ -121,7 +117,7 @@ func (s *Service) hydraLogin(challenge string, login *hydraapi.LoginRequest) (*h
 		realm:     realm,
 		scope:     scopes,
 		loginHint: loginHintAccount,
-		idpName:   loginHintProvider,
+		provider:  loginHintProvider,
 		challenge: challenge,
 	}
 	redirect, err := s.login(in, cfg)
@@ -141,11 +137,7 @@ func (s *Service) HydraConsent(w http.ResponseWriter, r *http.Request) {
 
 	consent, err := hydra.GetConsentRequest(s.httpClient, s.hydraAdminURL, challenge)
 	if err != nil {
-		httputils.WriteError(w, status.Errorf(codes.Unavailable, "%v", err))
-		return
-	}
-
-	if hydra.ConsentSkip(w, r, s.httpClient, consent, s.hydraAdminURL, challenge) {
+		httputils.WriteError(w, err)
 		return
 	}
 
@@ -174,8 +166,8 @@ func (s *Service) hydraConsent(r *http.Request, challenge string, consent *hydra
 		}
 	}()
 
-	state := &cpb.AuthTokenState{}
-	err = s.store.ReadTx(storage.AuthTokenStateDatatype, storage.DefaultRealm, storage.DefaultUser, stateID, storage.LatestRev, state, tx)
+	state := &cpb.LoginState{}
+	err = s.store.ReadTx(storage.LoginStateDatatype, storage.DefaultRealm, storage.DefaultUser, stateID, storage.LatestRev, state, tx)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "%v", err)
 	}
@@ -183,6 +175,7 @@ func (s *Service) hydraConsent(r *http.Request, challenge string, consent *hydra
 	state.ConsentChallenge = challenge
 	state.Scope = strings.Join(consent.RequestedScope, " ")
 	state.Audience = append(consent.RequestedAudience, consent.Client.ClientID)
+	state.ClientName = consent.Client.Name
 
 	cfg, err := s.loadConfig(tx, state.Realm)
 	if err != nil {
@@ -193,65 +186,97 @@ func (s *Service) hydraConsent(r *http.Request, challenge string, consent *hydra
 		redirect, err := s.hydraConsentSkipInformationReleasePage(r, stateID, state, cfg, tx)
 		return &htmlPageOrRedirectURL{redirect: redirect}, err
 	}
-	page, err := s.hydraConsentReturnInformationReleasePage(r, consent, stateID, state, cfg, tx)
-	return &htmlPageOrRedirectURL{page: page}, err
+	return s.hydraConsentRememberConsentOrInformationReleasePage(r, consent, stateID, state, cfg, tx)
 }
 
-func (s *Service) hydraConsentSkipInformationReleasePage(r *http.Request, stateID string, state *cpb.AuthTokenState, cfg *pb.IcConfig, tx storage.Tx) (string, error) {
-	err := s.store.DeleteTx(storage.AuthTokenStateDatatype, storage.DefaultRealm, storage.DefaultUser, stateID, storage.LatestRev, tx)
+func (s *Service) hydraConsentSkipInformationReleasePage(r *http.Request, stateID string, state *cpb.LoginState, cfg *pb.IcConfig, tx storage.Tx) (string, error) {
+	err := s.store.DeleteTx(storage.LoginStateDatatype, storage.DefaultRealm, storage.DefaultUser, stateID, storage.LatestRev, tx)
 	if err != nil {
-		return "", status.Errorf(codes.Internal, "%v", err)
+		return "", status.Errorf(codes.Internal, "skip information release page delete state failed: %v", err)
 	}
 
-	redirect, err := s.hydraAcceptConsent(r, state, cfg, tx)
+	secrets, err := s.loadSecrets(tx)
+	if err != nil {
+		return "", status.Errorf(codes.Internal, "skip information release page loadSecrets() failed: %v", err)
+	}
+
+	acct, st, err := s.scim.LoadAccount(state.Subject, state.Realm, false, tx)
+	if err != nil {
+		return "", status.Errorf(httputils.RPCCode(st), "skip information release page LoadAccount() failed: %v", err)
+	}
+
+	id, err := s.accountToIdentity(r.Context(), acct, cfg, secrets)
+	if err != nil {
+		return "", status.Errorf(codes.Internal, "skip information release page accountToIdentity() failed: %v", err)
+	}
+
+	redirect, err := s.hydraAcceptConsent(id, state)
 	if err != nil {
 		return "", err
 	}
 	return redirect, nil
 }
 
-func (s *Service) hydraConsentReturnInformationReleasePage(r *http.Request, consent *hydraapi.ConsentRequest, stateID string, state *cpb.AuthTokenState, cfg *pb.IcConfig, tx storage.Tx) (string, error) {
+func (s *Service) hydraConsentRememberConsentOrInformationReleasePage(r *http.Request, consent *hydraapi.ConsentRequest, stateID string, state *cpb.LoginState, cfg *pb.IcConfig, tx storage.Tx) (*htmlPageOrRedirectURL, error) {
 	clientName := consent.Client.Name
 	if len(clientName) == 0 {
 		clientName = consent.Client.ClientID
 	}
 	if len(clientName) == 0 {
-		return "", status.Errorf(codes.Unavailable, "consent.Client.Name empty")
+		return nil, status.Errorf(codes.Unavailable, "consent.Client.Name empty")
 	}
 
 	sub := consent.Subject
 	if len(sub) == 0 {
-		return "", status.Errorf(codes.Unavailable, "consent.Subject empty")
+		return nil, status.Errorf(codes.Unavailable, "consent.Subject empty")
 	}
 
-	err := s.store.WriteTx(storage.AuthTokenStateDatatype, storage.DefaultRealm, storage.DefaultUser, stateID, storage.LatestRev, state, nil, tx)
+	err := s.store.WriteTx(storage.LoginStateDatatype, storage.DefaultRealm, storage.DefaultUser, stateID, storage.LatestRev, state, nil, tx)
 	if err != nil {
-		return "", status.Errorf(codes.Internal, "%v", err)
+		return nil, status.Errorf(codes.Internal, "%v", err)
 	}
 	a, err := auth.FromContext(r.Context())
 	if err != nil {
-		return "", status.Errorf(codes.Internal, "%v", err)
+		return nil, status.Errorf(codes.Internal, "%v", err)
 	}
 
 	acct, st, err := s.scim.LoadAccount(sub, state.Realm, a.IsAdmin, tx)
 	if err != nil {
-		return "", status.Errorf(httputils.RPCCode(st), "%v", err)
+		return nil, status.Errorf(httputils.RPCCode(st), "%v", err)
 	}
 
 	secrets, err := s.loadSecrets(tx)
 	if err != nil {
-		return "", status.Errorf(codes.Unavailable, "%v", err)
+		return nil, status.Errorf(codes.Unavailable, "%v", err)
 	}
 
 	id, err := s.accountToIdentity(r.Context(), acct, cfg, secrets)
 	if err != nil {
-		return "", status.Errorf(codes.Internal, "%v", err)
+		return nil, status.Errorf(codes.Internal, "%v", err)
 	}
 
 	id.Scope = strings.Join(consent.RequestedScope, " ")
 
-	page := s.informationReleasePage(id, stateID, clientName, id.Scope, state.Realm, cfg)
-	return page, nil
+	rcp, err := s.findRememberedConsent(consent.RequestedScope, id.Subject, state.Realm, state.ClientName, tx)
+	if err != nil {
+		return nil, err
+	}
+
+	if rcp != nil {
+		scoped, err := scopedIdentity(id, rcp, id.Scope, s.getIssuerString(), id.Subject, time.Now().Unix(), id.NotBefore, id.Expiry)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "accept info release scopedIdentity() failed: %v", err)
+		}
+
+		redirect, err := s.hydraAcceptConsent(scoped, state)
+		if err != nil {
+			return nil, err
+		}
+		return &htmlPageOrRedirectURL{redirect: redirect}, nil
+	}
+
+	page := s.informationReleasePage(id, stateID, clientName, id.Scope)
+	return &htmlPageOrRedirectURL{page: page}, nil
 }
 
 func identityToHydraMap(id *ga4gh.Identity) (map[string]interface{}, error) {
@@ -274,34 +299,10 @@ func identityToHydraMap(id *ga4gh.Identity) (map[string]interface{}, error) {
 	return m, err
 }
 
-func (s *Service) hydraAcceptConsent(r *http.Request, state *cpb.AuthTokenState, cfg *pb.IcConfig, tx storage.Tx) (string, error) {
-	secrets, err := s.loadSecrets(tx)
+func (s *Service) hydraAcceptConsent(id *ga4gh.Identity, state *cpb.LoginState) (string, error) {
+	m, err := identityToHydraMap(id)
 	if err != nil {
-		return "", status.Errorf(codes.Unavailable, "%v", err)
-	}
-	a, err := auth.FromContext(r.Context())
-	if err != nil {
-		return "", status.Errorf(codes.Internal, "%v", err)
-	}
-
-	acct, st, err := s.scim.LoadAccount(state.Subject, state.Realm, a.IsAdmin, tx)
-	if err != nil {
-		return "", status.Errorf(httputils.RPCCode(st), "%v", err)
-	}
-
-	id, err := s.accountToIdentity(r.Context(), acct, cfg, secrets)
-	if err != nil {
-		return "", status.Errorf(codes.Internal, "%v", err)
-	}
-
-	now := time.Now().Unix()
-
-	// TODO: scope maybe different after optional information release.
-	// scope down the identity.
-	scoped := scopedIdentity(id, state.Scope, s.getIssuerString(), state.Subject, "", now, id.NotBefore, id.Expiry, []string{}, "")
-	m, err := identityToHydraMap(scoped)
-	if err != nil {
-		return "", status.Errorf(codes.Internal, "%v", err)
+		return "", status.Errorf(codes.Internal, "hydraAcceptConsent identityToHydraMap() failed: %v", err)
 	}
 
 	tokenID := uuid.New()
@@ -318,9 +319,9 @@ func (s *Service) hydraAcceptConsent(r *http.Request, state *cpb.AuthTokenState,
 		},
 	}
 
-	if len(scoped.Identities) != 0 {
+	if len(id.Identities) != 0 {
 		var identities []string
-		for k := range scoped.Identities {
+		for k := range id.Identities {
 			identities = append(identities, k)
 		}
 
@@ -329,7 +330,7 @@ func (s *Service) hydraAcceptConsent(r *http.Request, state *cpb.AuthTokenState,
 
 	resp, err := hydra.AcceptConsent(s.httpClient, s.hydraAdminURL, state.ConsentChallenge, req)
 	if err != nil {
-		return "", status.Errorf(codes.Unavailable, "%v", err)
+		return "", err
 	}
 
 	return resp.RedirectTo, nil

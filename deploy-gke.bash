@@ -163,6 +163,11 @@ sed -i 's/${DOMAIN_FOR_IC}/'${DOMAIN_IC?}'/g' ./deploy/build-gke/icdemo/k8s.yaml
 
 sed -i 's/${DOMAIN_FOR_IC}/'${DOMAIN_IC?}'/g' ./deploy/build-gke/ingress.yaml
 
+sed -i 's/build-gke-templates/build-gke/g' ./deploy/build-gke/ic/Dockerfile
+sed -i 's/build-gke-templates/build-gke/g' ./deploy/build-gke/ic/cloudbuild.yaml
+sed -i 's/build-gke-templates/build-gke/g' ./deploy/build-gke/hydra-ic/Dockerfile
+sed -i 's/build-gke-templates/build-gke/g' ./deploy/build-gke/hydra-ic/cloudbuild.yaml
+
 if [[ "${CONFIG_ONLY}" != "" ]]; then
   echo -e ${GREEN?}'CONFIG_ONLY flag is set. Skipping all other steps.'${RESET?}
   exit 0

@@ -25,14 +25,16 @@ const (
 	loginPath = "/identity/v1alpha/{realm}/login/{name}"
 	// Redirected here from an IdP.
 	finishLoginPath = "/identity/v1alpha/{realm}/loggedin/{name}"
-	// Redirected here from claim release consent page.
-	acceptInformationReleasePath = "/identity/v1alpha/{realm}/inforelease"
 	// Redirected to here from Hydra login.
 	hydraLoginPath = "/identity/login"
 	// Redirected to here from Hydra consent.
 	hydraConsentPath = "/identity/consent"
 	// Redirected to here from Identity Broker.
 	acceptLoginPath = "/identity/loggedin"
+	// Redirected here from claim release consent page.
+	acceptInformationReleasePath = "/identity/inforelease/accept"
+	// Redirected here from claim release consent page.
+	rejectInformationReleasePath = "/identity/inforelease/reject"
 	// Proxy hydra token endpoint.
 	oauthTokenPath = "/oauth2/token"
 	// Hydra's auth endpoint.
@@ -85,6 +87,9 @@ const (
 	tokenPath  = "/tokens/"
 
 	// End-point for managing consents. See "proto/tokens/v1/tokens.proto"
+	listConsentPath   = "/identity/v1alpha/users/{user}/consents"
+	deleteConsentPath = "/identity/v1alpha/users/{user}/consents/{consent_id}"
+	// TODO: delete the mocked endpoints when complete.
 	consentsPath = "/consents"
 	consentPath  = "/consents/"
 

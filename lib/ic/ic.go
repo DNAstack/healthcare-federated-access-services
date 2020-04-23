@@ -21,6 +21,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"html/template"
 	"io"
 	"net/http"
 	"net/url"
@@ -49,7 +50,6 @@ import (
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh" /* copybara-comment: ga4gh */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/handlerfactory" /* copybara-comment: handlerfactory */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/httputils" /* copybara-comment: httputils */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/hydra" /* copybara-comment: hydra */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/hydraproxy" /* copybara-comment: hydraproxy */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/kms" /* copybara-comment: kms */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/oathclients" /* copybara-comment: oathclients */
@@ -218,7 +218,7 @@ type Service struct {
 	httpClient                 *http.Client
 	loginPage                  string
 	clientLoginPage            string
-	infomationReleasePage      string
+	infomationReleasePageTmpl  *template.Template
 	startTime                  int64
 	permissions                *permissions.Permissions
 	domain                     string
@@ -293,9 +293,9 @@ func New(r *mux.Router, params *Options) *Service {
 	if err != nil {
 		glog.Exitf("cannot load client login page: %v", err)
 	}
-	irp, err := srcutil.LoadFile(informationReleasePageFile)
+	infomationReleasePageTmpl, err := httputils.TemplateFromFile("info_release", informationReleasePageFile)
 	if err != nil {
-		glog.Exitf("cannot load information release page: %v", err)
+		glog.Exitf("cannot create template for information release page: %v", err)
 	}
 	syncFreq := time.Minute
 	if params.HydraSyncFreq > 0 {
@@ -312,7 +312,7 @@ func New(r *mux.Router, params *Options) *Service {
 		httpClient:                 params.HTTPClient,
 		loginPage:                  lp,
 		clientLoginPage:            clp,
-		infomationReleasePage:      irp,
+		infomationReleasePageTmpl:  infomationReleasePageTmpl,
 		startTime:                  time.Now().Unix(),
 		permissions:                perms,
 		domain:                     params.Domain,
@@ -450,8 +450,7 @@ func (s *Service) renderLoginPage(cfg *pb.IcConfig, pathVars map[string]string, 
 }
 
 func (s *Service) idpAuthorize(in loginIn, idp *cpb.IdentityProvider, cfg *pb.IcConfig, tx storage.Tx) (*oauth2.Config, string, error) {
-	scope := strings.Join(in.scope, " ")
-	stateID, err := s.buildState(in.idpName, in.realm, scope, in.challenge, tx)
+	stateID, err := s.buildState(in.provider, in.realm, in.challenge, tx)
 	if err != nil {
 		return nil, "", err
 	}
@@ -482,12 +481,12 @@ func idpConfig(idp *cpb.IdentityProvider, domainURL string, secrets *pb.IcSecret
 	}
 }
 
-func (s *Service) buildState(idpName, realm, scope, challenge string, tx storage.Tx) (string, error) {
+func (s *Service) buildState(idpName, realm, challenge string, tx storage.Tx) (string, error) {
 	login := &cpb.LoginState{
-		IdpName:   idpName,
-		Realm:     realm,
-		Scope:     scope,
-		Challenge: challenge,
+		Provider:       idpName,
+		Realm:          realm,
+		LoginChallenge: challenge,
+		Step:           cpb.LoginState_LOGIN,
 	}
 
 	id := uuid.New()
@@ -528,7 +527,7 @@ func (s *Service) idpUsesClientLoginPage(idpName, realm string, cfg *pb.IcConfig
 }
 
 type loginIn struct {
-	idpName   string
+	provider  string
 	loginHint string
 	realm     string
 	challenge string
@@ -539,9 +538,9 @@ type loginIn struct {
 func (s *Service) login(in loginIn, cfg *pb.IcConfig) (string, error) {
 	var err error
 
-	idp, ok := cfg.IdentityProviders[in.idpName]
+	idp, ok := cfg.IdentityProviders[in.provider]
 	if !ok {
-		return "", status.Errorf(codes.NotFound, "login service %q not found", in.idpName)
+		return "", status.Errorf(codes.NotFound, "login service %q not found", in.provider)
 	}
 
 	idpc, state, err := s.idpAuthorize(in, idp, cfg, nil)
@@ -594,84 +593,6 @@ func (s *Service) getAndValidateStateRedirect(r *http.Request, cfg *pb.IcConfig)
 	return redirect, nil
 }
 
-// finishLogin returns html page or redirect url and status error
-func (s *Service) finishLogin(id *ga4gh.Identity, provider, redirect, scope, clientID, state, challenge string, tx storage.Tx, cfg *pb.IcConfig, secrets *pb.IcSecrets, r *http.Request) (*htmlPageOrRedirectURL, error) {
-	realm := getRealm(r)
-	lookup, err := s.scim.LoadAccountLookup(realm, id.Subject, tx)
-	if err != nil {
-		return nil, status.Errorf(codes.Unavailable, "%v", err)
-	}
-	var subject string
-	if isLookupActive(lookup) {
-		subject = lookup.Subject
-		acct, _, err := s.scim.LoadAccount(subject, realm, true, tx)
-		if err != nil {
-			return nil, status.Errorf(codes.Unavailable, "%v", err)
-		}
-		if acct.State == storage.StateDisabled {
-			// Reject using a DISABLED account.
-			return nil, status.Errorf(codes.PermissionDenied, "this account has been disabled, please contact the system administrator")
-		}
-		visas, err := s.accountLinkToVisas(r.Context(), acct, id.Subject, provider, cfg, secrets)
-		if err != nil {
-			return nil, status.Errorf(codes.Unavailable, "%v", err)
-		}
-		if !visasAreEqual(visas, id.VisaJWTs) {
-			// Refresh the claims in the storage layer.
-			if err := s.populateAccountVisas(r.Context(), acct, id, provider); err != nil {
-				return nil, status.Errorf(codes.Unavailable, "%v", err)
-			}
-			err := s.scim.SaveAccount(nil, acct, "REFRESH claims "+id.Subject, r, id.Subject, tx)
-			if err != nil {
-				return nil, status.Errorf(codes.Unavailable, "%v", err)
-			}
-		}
-	} else {
-		// Create an account for the identity automatically.
-		acct, err := s.newAccountWithLink(r.Context(), id, provider, cfg)
-		if err != nil {
-			return nil, status.Errorf(codes.Unavailable, "%v", err)
-		}
-
-		if err = s.saveNewLinkedAccount(acct, id, "New Account", r, tx, lookup); err != nil {
-			return nil, status.Errorf(codes.Unavailable, "%v", err)
-		}
-		subject = acct.Properties.Subject
-	}
-
-	loginHint := makeLoginHint(provider, id.Subject)
-
-	// redirect to information release page.
-	auth := &cpb.AuthTokenState{
-		Redirect:  redirect,
-		Subject:   subject,
-		Scope:     scope,
-		Provider:  provider,
-		Realm:     realm,
-		State:     state,
-		Nonce:     id.Nonce,
-		LoginHint: loginHint,
-	}
-
-	stateID := uuid.New()
-
-	err = s.store.WriteTx(storage.AuthTokenStateDatatype, storage.DefaultRealm, storage.DefaultUser, stateID, storage.LatestRev, auth, nil, tx)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "%v", err)
-	}
-
-	if s.useHydra {
-		// send login success to hydra and redirect to hydra, hydra will come back to /identity/consent for information release.
-		redirect, err := hydra.LoginSuccess(r, s.httpClient, s.hydraAdminURL, challenge, subject, stateID, nil)
-		if err != nil {
-			return nil, status.Errorf(codes.Unavailable, "%v", err)
-		}
-		return &htmlPageOrRedirectURL{redirect: redirect}, nil
-	}
-
-	return nil, status.Errorf(codes.Unimplemented, "Unimplemented oidc provider")
-}
-
 func extractClientName(cfg *pb.IcConfig, clientID string) string {
 	clientName := "the application"
 	for name, cli := range cfg.Clients {
@@ -686,56 +607,6 @@ func extractClientName(cfg *pb.IcConfig, clientID string) string {
 	}
 
 	return clientName
-}
-
-func (s *Service) informationReleasePage(id *ga4gh.Identity, stateID, clientName, scope, realm string, cfg *pb.IcConfig) string {
-	var info []string
-	scopes := strings.Split(scope, " ")
-
-	for _, s := range scopes {
-		switch {
-		case s == "openid":
-			if len(id.Subject) != 0 {
-				info = append(info, "openid: "+id.Subject)
-			}
-
-		case s == "profile":
-			var profile []string
-			if len(id.Name) != 0 {
-				profile = append(profile, id.Name)
-			}
-			if len(id.Email) != 0 {
-				profile = append(profile, id.Email)
-			}
-			info = append(info, "profile: "+strings.Join(profile, ","))
-
-		case (s == passportScope || s == ga4ghScope):
-			if len(id.VisaJWTs) != 0 {
-				info = append(info, "passport visas")
-			}
-
-		case s == "account_admin":
-			info = append(info, "manage (modify) this account")
-
-		case s == "link":
-			info = append(info, "link this account to other accounts")
-
-		default:
-			info = append(info, s)
-		}
-	}
-
-	for i := range info {
-		info[i] = "\"" + info[i] + "\""
-	}
-
-	page := strings.Replace(s.infomationReleasePage, "${APPLICATION_NAME}", clientName, -1)
-	page = strings.ReplaceAll(page, "${ASSET_DIR}", assetPath)
-	page = strings.ReplaceAll(page, "${INFORMATION}", strings.Join(info, ","))
-	page = strings.ReplaceAll(page, "${STATE}", stateID)
-	page = strings.ReplaceAll(page, "${PATH}", strings.ReplaceAll(acceptInformationReleasePath, "{realm}", realm))
-
-	return page
 }
 
 //////////////////////////////////////////////////////////////////
@@ -1032,43 +903,6 @@ func hasScopes(want, got string, matchPrefix bool) bool {
 		}
 	}
 	return true
-}
-
-func scopedIdentity(identity *ga4gh.Identity, scope, iss, subject, nonce string, iat, nbf, exp int64, aud []string, azp string) *ga4gh.Identity {
-	claims := &ga4gh.Identity{
-		Issuer:           iss,
-		Subject:          subject,
-		Audiences:        ga4gh.Audiences(aud),
-		IssuedAt:         iat,
-		NotBefore:        nbf,
-		ID:               uuid.New(),
-		AuthorizedParty:  azp,
-		Expiry:           exp,
-		Scope:            scope,
-		IdentityProvider: identity.IdentityProvider,
-		Nonce:            nonce,
-	}
-	if !hasScopes("refresh", scope, matchFullScope) {
-		// TODO: remove this extra "ga4gh" check once DDAP is compatible.
-		if hasScopes("identities", scope, matchFullScope) || hasScopes(passportScope, scope, matchFullScope) || hasScopes(ga4ghScope, scope, matchFullScope) {
-			claims.Identities = identity.Identities
-		}
-		if hasScopes("profile", scope, matchFullScope) {
-			claims.Name = identity.Name
-			claims.FamilyName = identity.FamilyName
-			claims.GivenName = identity.GivenName
-			claims.Username = identity.Username
-			claims.Picture = identity.Picture
-			claims.Locale = identity.Locale
-			claims.Email = identity.Email
-			claims.Picture = identity.Picture
-		}
-		if hasScopes("ga4gh_passport_v1", scope, matchFullScope) {
-			claims.VisaJWTs = identity.VisaJWTs
-		}
-	}
-
-	return claims
 }
 
 func (s *Service) visaIssuerJKU() string {
@@ -1714,7 +1548,8 @@ func registerHandlers(r *mux.Router, s *Service) {
 	// oidc login flow endpoints
 	r.HandleFunc(loginPath, auth.MustWithAuth(s.Login, checker, auth.RequireNone)).Methods(http.MethodGet)
 	r.HandleFunc(finishLoginPath, auth.MustWithAuth(s.FinishLogin, checker, auth.RequireNone)).Methods(http.MethodGet)
-	r.HandleFunc(acceptInformationReleasePath, auth.MustWithAuth(s.AcceptInformationRelease, checker, auth.RequireNone)).Methods(http.MethodGet)
+	r.HandleFunc(acceptInformationReleasePath, auth.MustWithAuth(s.AcceptInformationRelease, checker, auth.RequireNone)).Methods(http.MethodPost)
+	r.HandleFunc(rejectInformationReleasePath, auth.MustWithAuth(s.RejectInformationRelease, checker, auth.RequireNone)).Methods(http.MethodPost)
 	r.HandleFunc(acceptLoginPath, auth.MustWithAuth(s.AcceptLogin, checker, auth.RequireNone)).Methods(http.MethodGet)
 
 	// hydra related oidc endpoints
@@ -1767,8 +1602,12 @@ func registerHandlers(r *mux.Router, s *Service) {
 
 	// consents service endpoints
 	consents := &consentsapi.StubConsents{Consent: consentsapi.FakeConsent}
-	r.HandleFunc(consentsPath, auth.MustWithAuth(consentsapi.NewConsentsHandler(consents).ListConsents, checker, auth.RequireUserToken)).Methods(http.MethodGet)
-	r.HandleFunc(consentPath, auth.MustWithAuth(consentsapi.NewConsentsHandler(consents).DeleteConsent, checker, auth.RequireUserToken)).Methods(http.MethodDelete)
+	r.HandleFunc(listConsentPath, auth.MustWithAuth(consentsapi.NewMockConsentsHandler(consents).ListConsents, checker, auth.RequireUserToken)).Methods(http.MethodGet)
+	r.HandleFunc(deleteConsentPath, auth.MustWithAuth(consentsapi.NewMockConsentsHandler(consents).DeleteConsent, checker, auth.RequireUserToken)).Methods(http.MethodDelete)
+
+	// TODO: delete the mocked endpoints when complete.
+	r.HandleFunc(consentsPath, auth.MustWithAuth(consentsapi.NewMockConsentsHandler(consents).ListConsents, checker, auth.RequireUserToken)).Methods(http.MethodGet)
+	r.HandleFunc(consentPath, auth.MustWithAuth(consentsapi.NewMockConsentsHandler(consents).DeleteConsent, checker, auth.RequireUserToken)).Methods(http.MethodDelete)
 
 	// legacy endpoints
 	r.HandleFunc(adminClaimsPath, auth.MustWithAuth(handlerfactory.MakeHandler(s.GetStore(), s.adminClaimsFactory()), checker, auth.RequireAdminToken))

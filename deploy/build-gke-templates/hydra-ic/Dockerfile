@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM golang:1.13.5-buster
+FROM golang:1.14.1-buster
 
 WORKDIR /
 
@@ -24,7 +24,7 @@ RUN git clone https://github.com/ory/hydra.git && \
     git checkout ${HYDRA_VERSION} && \
     go build
 
-COPY deploy/build-gke/hydra-ic/entrypoint.bash /entrypoint.sh
+COPY deploy/build-gke-templates/hydra-ic/entrypoint.bash /entrypoint.sh
 
 EXPOSE 4444 4445
 

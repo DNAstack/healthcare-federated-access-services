@@ -87,8 +87,7 @@ func TestClIFlow_Success(t *testing.T) {
 func TestClIFlow_EmailMismatch(t *testing.T) {
 	email := "bad_admin@faculty.example.edu"
 	tokenOutput := `*bad_admin@faculty.example.edu*`
-	// TODO: ideally this would return a Unauthorized or Forbidden status.
-	tokenStatus := http.StatusBadRequest
+	tokenStatus := http.StatusUnauthorized
 	if err := cliFlow(t, email, tokenOutput, tokenStatus); err != nil {
 		t.Fatalf("cliFlow(t, %q, _, %d) failed: %v", email, tokenStatus, err)
 	}
@@ -119,7 +118,7 @@ func cliFlow(t *testing.T, email, tokenOutput string, tokenStatus int) error {
 			Method: "GET",
 			Path:   "/test/cli/auth/1a4f6c82-d8a7-433b-9916-12e365efc971",
 			Output: `*https://hydra.example.com/authorize?client_id=*grant_type=authorization_code*redirect_uri=*response_type=code*scope=openid+profile+email+offline*state=1a4f6c82-d8a7-433b-9916-12e365efc971*`,
-			Status: http.StatusTemporaryRedirect,
+			Status: http.StatusSeeOther,
 		},
 	}
 	regResp := test.HandlerTests(t, s.Handler, regReq, hydraPublicURL, nil)["register"]
