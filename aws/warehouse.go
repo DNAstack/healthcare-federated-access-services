@@ -88,7 +88,7 @@ type AccountWarehouse struct {
 	svcUserArn *string
 	store      storage.Store
 	tmp        map[string]iam.AccessKey
-	keyGC      *processaws.KeyGc
+	keyGC      *processaws.KeyGC
 }
 
 //TODO: Getting AWS service accounts
@@ -144,9 +144,12 @@ func (wh *AccountWarehouse) RemoveServiceAccount(ctx context.Context, project, a
 
 //This method is the main method where key removal happens
 func (wh *AccountWarehouse) ManageAccountKeys(ctx context.Context, project, accountID string, ttl, maxKeyTTL time.Duration, now time.Time, keysPerAccount int64) (int, int, error) {
-	//TODO: Get service account keys
-	fmt.Printf("ACCOUNT ID: %v", accountID)
+	fmt.Printf("ACCOUNT ID: %v \n", accountID)
+	fmt.Printf("Project: %v \n", project)
+	fmt.Printf("ttl: %v \n", ttl)
+	fmt.Printf("maxkeyTTL: %v \n", maxKeyTTL)
 	expired := now.Add(-1 * maxKeyTTL).Format(time.RFC3339)
+	fmt.Printf("expired: %v \n", expired)
 	sess, err := createSession()
 	if err != nil {
 
@@ -398,13 +401,15 @@ func (wh *AccountWarehouse) MintTokenWithTTL(ctx context.Context, params *Resour
 		return nil, err
 	}
 
-	return wh.ensureTokenResult(sess, principalArn, princSpec)
+	fmt.Printf("Principal ARN: %v \n", principalArn)
+
+	return wh.ensureTokenResult(sess, principalArn, princSpec, ctx, svcUserArn)
 }
 
-func (wh *AccountWarehouse) ensureTokenResult(sess *session.Session, principalArn string, princSpec *principalSpec) (*clouds.AwsResourceTokenResult, error) {
+func (wh *AccountWarehouse) ensureTokenResult(sess *session.Session, principalArn string, princSpec *principalSpec, ctx context.Context, svcUserArn string) (*clouds.AwsResourceTokenResult, error) {
 	switch princSpec.pType {
 	case userType:
-		return wh.ensureAccessKeyResult(sess, principalArn, princSpec)
+		return wh.ensureAccessKeyResult(sess, principalArn, princSpec, ctx, svcUserArn)
 	case roleType:
 		return createTempCredentialResult(sess, principalArn, princSpec.params)
 	default:
@@ -428,8 +433,9 @@ func createTempCredentialResult(sess *session.Session, principalArn string, para
 	}, nil
 }
 
-func (wh *AccountWarehouse) ensureAccessKeyResult(sess *session.Session, principalArn string, princSpec *principalSpec) (*clouds.AwsResourceTokenResult, error) {
-	accessKey, err := wh.ensureAccessKey(sess, princSpec.getId())
+func (wh *AccountWarehouse) ensureAccessKeyResult(sess *session.Session, principalArn string, princSpec *principalSpec, ctx context.Context, svcUserArn string) (*clouds.AwsResourceTokenResult, error) {
+	// send ttl to this method
+	accessKey, err := wh.ensureAccessKey(sess, principalArn, princSpec, ctx, svcUserArn)
 	if err != nil {
 		return nil, err
 	}
@@ -513,9 +519,20 @@ func assumeRole(sessionName string, svcSts *sts.STS, roleArn string, ttl time.Du
 	return aro, nil
 }
 
-func (wh *AccountWarehouse) ensureAccessKey(sess *session.Session, userId string) (iam.AccessKey, error) {
+func (wh *AccountWarehouse) ensureAccessKey(sess *session.Session, userArn string, princSpec *principalSpec, ctx context.Context, svcUserArn string) (iam.AccessKey, error) {
 	svc := iam.New(sess)
+	fmt.Printf("params: %v \n", princSpec.params)
+	fmt.Printf("userArn: %v \n", userArn)
 	// TODO persist access key, lookup from store
+	// QUESTION: not sure what this makeRoom does
+	// garbage collection call
+	makeRoom := princSpec.params.ManagedKeysPerAccount - 1
+	keyTTL := timeutil.KeyTTL(princSpec.params.MaxKeyTtl, princSpec.params.ManagedKeysPerAccount)
+	userId := princSpec.getId()
+	fmt.Printf("calling manage account keys from ensure access key")
+	if _, _, err := wh.ManageAccountKeys(ctx, svcUserArn, userId, princSpec.params.Ttl, keyTTL, time.Now(), int64(makeRoom)); err != nil {
+		return iam.AccessKey{}, fmt.Errorf("garbage collecting keys: %v", err)
+	}
 	accessKey, ok := wh.tmp[userId]
 	if !ok {
 		kres, err := svc.CreateAccessKey(&iam.CreateAccessKeyInput{

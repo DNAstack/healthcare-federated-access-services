@@ -18,7 +18,7 @@ const (
 )
 
 // define a garbage collector background process for policies and keys
-type KeyGc struct {
+type KeyGC struct {
 	name    string
 	aw      clouds.AccountManager
 	process *processlib.Process
@@ -26,8 +26,8 @@ type KeyGc struct {
 }
 
 // method to create a new garbage collector
-func NewKeyGC(name string, warehouse clouds.AccountManager, store storage.Store, maxRequestedTTL time.Duration, keysPerAccount int) *KeyGc{
-	k := &KeyGc{
+func NewKeyGC(name string, warehouse clouds.AccountManager, store storage.Store, maxRequestedTTL time.Duration, keysPerAccount int) *KeyGC {
+	k := &KeyGC{
 		name:    name,
 		aw:      warehouse,
 	}
@@ -46,15 +46,15 @@ func NewKeyGC(name string, warehouse clouds.AccountManager, store storage.Store,
 	return k
 }
 
-func (k *KeyGc) RegisterWork(workName string, params *pb.Process_Params, tx storage.Tx) (*pb.Process_Work, error) {
+func (k *KeyGC) RegisterWork(workName string, params *pb.Process_Params, tx storage.Tx) (*pb.Process_Work, error) {
 	return k.process.RegisterWork(workName, params, tx)
 }
 
-func (k *KeyGc) UnregisterWork(workName string, tx storage.Tx) error  {
+func (k *KeyGC) UnregisterWork(workName string, tx storage.Tx) error  {
 	return k.process.UnregisterWork(workName, tx)
 }
 
-func (k *KeyGc) UpdateSettings(maxRequestedTTL time.Duration, keysPerAccount int, tx storage.Tx) error {
+func (k *KeyGC) UpdateSettings(maxRequestedTTL time.Duration, keysPerAccount int, tx storage.Tx) error {
 	keyTTL := timeutil.KeyTTL(maxRequestedTTL, keysPerAccount)
 	settings := &pb.Process_Params{
 		IntParams: map[string]int64{
@@ -71,12 +71,12 @@ func (k *KeyGc) UpdateSettings(maxRequestedTTL time.Duration, keysPerAccount int
 }
 
 // WaitCondition registers a callback that is called and checks conditions before every wait cycle.
-func (k *KeyGc) WaitCondition(fn func(ctx context.Context, duration time.Duration) bool) {
+func (k *KeyGC) WaitCondition(fn func(ctx context.Context, duration time.Duration) bool) {
 	k.wait = fn
 }
 
 // processlib implementations
-func (k *KeyGc) ProcessActiveWork(ctx context.Context, state *pb.Process, workName string, work *pb.Process_Work, process *processlib.Process) error {
+func (k *KeyGC) ProcessActiveWork(ctx context.Context, state *pb.Process, workName string, work *pb.Process_Work, process *processlib.Process) error {
 	fmt.Printf("Process Active Work AWS\n")
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -108,7 +108,7 @@ func (k *KeyGc) ProcessActiveWork(ctx context.Context, state *pb.Process, workNa
 	return nil
 }
 
-func (k *KeyGc) CleanupWork(ctx context.Context, state *pb.Process, workName string, process *processlib.Process) error {
+func (k *KeyGC) CleanupWork(ctx context.Context, state *pb.Process, workName string, process *processlib.Process) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -126,7 +126,7 @@ func (k *KeyGc) CleanupWork(ctx context.Context, state *pb.Process, workName str
 	return nil
 }
 
-func (k *KeyGc) Wait(ctx context2.Context, duration time.Duration) bool {
+func (k *KeyGC) Wait(ctx context2.Context, duration time.Duration) bool {
 	fmt.Printf("!!!!!AWS WAITING!!!!! \n")
 	if k.wait != nil && !k.wait(ctx, duration) {
 		return false
@@ -136,7 +136,7 @@ func (k *KeyGc) Wait(ctx context2.Context, duration time.Duration) bool {
 }
 
 // Run schedules a background process.
-func (k *KeyGc) Run(ctx context.Context)  {
+func (k *KeyGC) Run(ctx context.Context)  {
 	fmt.Printf("++++ Calling aws run from processaws ++++ \n")
 	k.process.Run(ctx)
 }
