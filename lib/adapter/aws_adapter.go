@@ -36,7 +36,7 @@ func NewAwsAdapter(store storage.Store, warehouse clouds.ResourceTokenCreator, s
 		return nil, fmt.Errorf("reading %q service descriptors from path %q: %v", aggregatorName, path, err)
 	}
 	ctx := context.Background()
-	wh, err := aws.NewWarehouse(store, ctx)
+	wh, err := aws.NewWarehouse(ctx, store)
 	if err != nil {
 		return nil, fmt.Errorf("error creating AWS key warehouse: %v", err)
 	}

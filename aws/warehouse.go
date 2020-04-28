@@ -108,7 +108,7 @@ func (wh *AccountWarehouse) GetServiceAccounts(ctx context.Context, project stri
 			return nil
 		}
 		sess, err := createSession()
-		if err !=nil {
+		if err != nil {
 			return
 		}
 		svc := iam.New(sess)
@@ -144,7 +144,7 @@ func (wh *AccountWarehouse) ManageAccountKeys(ctx context.Context, project, acco
 	expired := now.Add(-1 * maxKeyTTL).Format(time.RFC3339)
 	sess, err := createSession()
 	if err != nil {
-		return 0, 0, fmt.Errorf("error creating session: %v", err)
+		return 0, 0, fmt.Errorf("error creating AWS session: %v", err)
 	}
 	svc := iam.New(sess)
 	accessKeys, err := svc.ListAccessKeys(&iam.ListAccessKeysInput{
@@ -156,7 +156,6 @@ func (wh *AccountWarehouse) ManageAccountKeys(ctx context.Context, project, acco
 	keys := accessKeys.AccessKeyMetadata
 	var actives []*iam.AccessKeyMetadata
 	active := len(keys)
-	//keys := accessKeys.AccessKeyMetadata
 	for _, key := range keys {
 		t := timeutil.TimestampProto(aws.TimeValue(key.CreateDate))
 		if timeutil.RFC3339(t) < expired {
@@ -165,8 +164,8 @@ func (wh *AccountWarehouse) ManageAccountKeys(ctx context.Context, project, acco
 				AccessKeyId: key.AccessKeyId,
 				UserName:    aws.String(accountID),
 			})
-			if err !=nil {
-				return active, len(keys) - active, fmt.Errorf("error deleting access key: %v", err)
+			if err != nil {
+				return active, len(keys) - active, fmt.Errorf("error deleting aws access key: %v", err)
 			}
 			active--
 			continue
@@ -262,7 +261,7 @@ type policySpec struct {
 
 // NewAccountWarehouse creates a new AccountWarehouse using the provided client
 // and options.
-func NewWarehouse(store storage.Store, ctx context.Context) (*AccountWarehouse, error) {
+func NewWarehouse(ctx context.Context, store storage.Store) (*AccountWarehouse, error) {
 	wh := &AccountWarehouse{
 		store: store,
 		tmp: make(map[string]iam.AccessKey),
@@ -275,7 +274,7 @@ func NewWarehouse(store storage.Store, ctx context.Context) (*AccountWarehouse, 
 
 func RegisterAccountGC(store storage.Store, wh *AccountWarehouse) (error) {
 	tx, err := store.Tx(true)
-	if err !=nil {
+	if err != nil {
 		return err
 	}
 	sess, err := createSession()
@@ -383,13 +382,13 @@ func (wh *AccountWarehouse) MintTokenWithTTL(ctx context.Context, params *Resour
 		return nil, err
 	}
 
-	return wh.ensureTokenResult(sess, principalArn, princSpec, ctx, svcUserArn)
+	return wh.ensureTokenResult(ctx, sess, principalArn, princSpec, svcUserArn)
 }
 
-func (wh *AccountWarehouse) ensureTokenResult(sess *session.Session, principalArn string, princSpec *principalSpec, ctx context.Context, svcUserArn string) (*clouds.AwsResourceTokenResult, error) {
+func (wh *AccountWarehouse) ensureTokenResult(ctx context.Context, sess *session.Session, principalArn string, princSpec *principalSpec, svcUserArn string) (*clouds.AwsResourceTokenResult, error) {
 	switch princSpec.pType {
 	case userType:
-		return wh.ensureAccessKeyResult(sess, principalArn, princSpec, ctx, svcUserArn)
+		return wh.ensureAccessKeyResult(ctx, sess, principalArn, princSpec, svcUserArn)
 	case roleType:
 		return createTempCredentialResult(sess, principalArn, princSpec.params)
 	default:
@@ -413,8 +412,8 @@ func createTempCredentialResult(sess *session.Session, principalArn string, para
 	}, nil
 }
 
-func (wh *AccountWarehouse) ensureAccessKeyResult(sess *session.Session, principalArn string, princSpec *principalSpec, ctx context.Context, svcUserArn string) (*clouds.AwsResourceTokenResult, error) {
-	accessKey, err := wh.ensureAccessKey(sess, principalArn, princSpec, ctx, svcUserArn)
+func (wh *AccountWarehouse) ensureAccessKeyResult(ctx context.Context, sess *session.Session, principalArn string, princSpec *principalSpec, svcUserArn string) (*clouds.AwsResourceTokenResult, error) {
+	accessKey, err := wh.ensureAccessKey(ctx, sess, principalArn, princSpec, svcUserArn)
 	if err != nil {
 		return nil, err
 	}
@@ -497,7 +496,7 @@ func assumeRole(sessionName string, svcSts *sts.STS, roleArn string, ttl time.Du
 	return aro, nil
 }
 
-func (wh *AccountWarehouse) ensureAccessKey(sess *session.Session, userArn string, princSpec *principalSpec, ctx context.Context, svcUserArn string) (iam.AccessKey, error) {
+func (wh *AccountWarehouse) ensureAccessKey(ctx context.Context, sess *session.Session, userArn string, princSpec *principalSpec, svcUserArn string) (iam.AccessKey, error) {
 	svc := iam.New(sess)
 	// TODO persist access key, lookup from store
 	// garbage collection call
