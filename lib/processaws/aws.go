@@ -86,7 +86,7 @@ func (k *KeyGC) ProcessActiveWork(ctx context.Context, state *pb.Process, workNa
 		process.AddWorkStats(1, "accounts", workName, state)
 		keyTTL := work.Params.IntParams["keyTtl"]
 		keysPerAccount := work.Params.IntParams["keysPerAccount"]
-		got, rm, err := k.aw.ManageAccountKeys(ctx, workName, a.DisplayName, 0, time.Duration(keyTTL)*time.Second, time.Now(), keysPerAccount)
+		got, rm, err := k.aw.ManageAccountKeys(ctx, workName, a.ID, 0, time.Duration(keyTTL)*time.Second, time.Now(), keysPerAccount)
 		if err != nil {
 			run := process.AddWorkError(err, workName, state)
 			if run != processlib.Continue {

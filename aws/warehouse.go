@@ -29,6 +29,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/aws/aws-sdk-go/service/sts"
 	"github.com/cenkalti/backoff"
+	"sort"
 	"strings"
 	"time"
 
@@ -67,9 +68,10 @@ const (
 	backoffMaxElapsedTime      = 10 * time.Second
 )
 
+//FIXME need to be moved to config, also the values
 const (
-	defaultGcFrequency = 1 * 24 * time.Hour /* 1 day */
-	defaultKeysPerAccount = 2 //FIXME my assumption is there is only one key per account
+	defaultGcFrequency = 1 * 24 * time.Hour
+	defaultKeysPerAccount = 2
 )
 
 var (
@@ -97,8 +99,8 @@ func (wh *AccountWarehouse) GetServiceAccounts(ctx context.Context, project stri
 		defer close(c)
 		f := func(acct *iam.User) error {
 			a := &clouds.Account{
-				ID:          aws.StringValue(acct.UserId),
-				DisplayName: aws.StringValue(acct.UserName),
+				ID:          aws.StringValue(acct.UserName),
+				DisplayName: aws.StringValue(acct.UserId),
 			}
 			select {
 			case c <- a:
@@ -151,7 +153,7 @@ func (wh *AccountWarehouse) ManageAccountKeys(ctx context.Context, project, acco
 		UserName: aws.String(accountID),
 	})
 	if err != nil {
-		return 0, 0, fmt.Errorf("error getting key list: %v", err)
+		return 0, 0, fmt.Errorf("error getting aws key list: %v", err)
 	}
 	keys := accessKeys.AccessKeyMetadata
 	var actives []*iam.AccessKeyMetadata
@@ -175,6 +177,21 @@ func (wh *AccountWarehouse) ManageAccountKeys(ctx context.Context, project, acco
 
 	if int64(len(actives)) < keysPerAccount {
 		return active, len(keys) - active, nil
+	}
+
+	// Remove earliest expiring keys
+	sort.Slice(actives, func(i, j int) bool {
+		return aws.TimeValue(actives[i].CreateDate).After(aws.TimeValue(actives[j].CreateDate))
+	})
+	for _, key := range actives[keysPerAccount:] {
+		_, err := svc.DeleteAccessKey(&iam.DeleteAccessKeyInput{
+			AccessKeyId: key.AccessKeyId,
+			UserName:    aws.String(accountID),
+		})
+		if err != nil {
+			return active, len(keys) - active, fmt.Errorf("deleting key: %v", err)
+		}
+		active--
 	}
 	return active, len(keys) - active, nil
 }
@@ -498,7 +515,6 @@ func assumeRole(sessionName string, svcSts *sts.STS, roleArn string, ttl time.Du
 
 func (wh *AccountWarehouse) ensureAccessKey(ctx context.Context, sess *session.Session, userArn string, princSpec *principalSpec, svcUserArn string) (iam.AccessKey, error) {
 	svc := iam.New(sess)
-	// TODO persist access key, lookup from store
 	// garbage collection call
 	makeRoom := princSpec.params.ManagedKeysPerAccount - 1
 	keyTTL := timeutil.KeyTTL(princSpec.params.MaxKeyTtl, princSpec.params.ManagedKeysPerAccount)
