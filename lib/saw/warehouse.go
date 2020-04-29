@@ -26,36 +26,37 @@ import (
 	"strings"
 	"time"
 
-	glog "github.com/golang/glog" /* copybara-comment */
-	"github.com/cenkalti/backoff" /* copybara-comment */
-	iamadmin "cloud.google.com/go/iam/admin/apiv1" /* copybara-comment: admin */
-	iamcreds "cloud.google.com/go/iam/credentials/apiv1" /* copybara-comment: credentials */
-	"golang.org/x/crypto/sha3" /* copybara-comment */
-	"google.golang.org/api/bigquery/v2" /* copybara-comment: bigquery */
-	"google.golang.org/api/cloudresourcemanager/v1" /* copybara-comment: cloudresourcemanager */
-	"google.golang.org/api/iterator" /* copybara-comment: iterator */
-	"google.golang.org/api/option" /* copybara-comment: option */
-	gcs "google.golang.org/api/storage/v1" /* copybara-comment: storage */
-	grpcbackoff "google.golang.org/grpc/backoff" /* copybara-comment */
-	"google.golang.org/grpc/codes" /* copybara-comment */
-	"google.golang.org/grpc" /* copybara-comment */
-	"google.golang.org/grpc/status" /* copybara-comment */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/clouds" /* copybara-comment: clouds */
+	iamadmin "cloud.google.com/go/iam/admin/apiv1"                                      /* copybara-comment: admin */
+	iamcreds "cloud.google.com/go/iam/credentials/apiv1"                                /* copybara-comment: credentials */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/clouds"    /* copybara-comment: clouds */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/httputils" /* copybara-comment: httputils */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/processgc" /* copybara-comment: processgc */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage" /* copybara-comment: storage */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/timeutil" /* copybara-comment: timeutil */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage"   /* copybara-comment: storage */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/timeutil"  /* copybara-comment: timeutil */
+	"github.com/cenkalti/backoff"                                                       /* copybara-comment */
+	glog "github.com/golang/glog"                                                       /* copybara-comment */
+	"golang.org/x/crypto/sha3"                                                          /* copybara-comment */
+	"google.golang.org/api/bigquery/v2"                                                 /* copybara-comment: bigquery */
+	"google.golang.org/api/cloudresourcemanager/v1"                                     /* copybara-comment: cloudresourcemanager */
+	"google.golang.org/api/iterator"                                                    /* copybara-comment: iterator */
+	"google.golang.org/api/option"                                                      /* copybara-comment: option */
+	gcs "google.golang.org/api/storage/v1"                                              /* copybara-comment: storage */
+	"google.golang.org/grpc"                                                            /* copybara-comment */
+	grpcbackoff "google.golang.org/grpc/backoff"                                        /* copybara-comment */
+	"google.golang.org/grpc/codes"                                                      /* copybara-comment */
+	"google.golang.org/grpc/status"                                                     /* copybara-comment */
 
-	iampb "google.golang.org/genproto/googleapis/iam/admin/v1" /* copybara-comment: iam_go_proto */
-	iamcredscpb "google.golang.org/genproto/googleapis/iam/credentials/v1" /* copybara-comment: common_go_proto */
 	cpb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/common/v1" /* copybara-comment: go_proto */
+	iampb "google.golang.org/genproto/googleapis/iam/admin/v1"                                /* copybara-comment: iam_go_proto */
+	iamcredscpb "google.golang.org/genproto/googleapis/iam/credentials/v1"                    /* copybara-comment: common_go_proto */
 )
 
 const (
 	projectVariable       = "project"
 	bucketVariable        = "bucket"
 	datasetVariable       = "dataset"
-	jobProjectVariable	  = "job-project"
+	jobProjectVariable    = "job-project"
+	userProjectVariable   = "userProject"
 	inheritProject        = "-"
 	gcMaxTTL              = 180 * 24 * time.Hour /* 180 days */
 	defaultGcFrequency    = 14 * 24 * time.Hour  /* 14 days */
@@ -520,6 +521,12 @@ func parseParams(params *clouds.ResourceTokenCreationParams) (projects map[strin
 			bkt, ok := item[bucketVariable]
 			if ok && len(bkt) > 0 {
 				buckets[bkt] = append(buckets[bkt], resolvedRole)
+
+				userProj, ok := item[userProjectVariable]
+				if ok {
+					// requester-pays: add this role for permission serviceusage.services.use
+					projects[userProj] = append(projects[userProj], "roles/serviceusage.serviceUsageConsumer")
+				}
 				continue
 			}
 
@@ -533,14 +540,15 @@ func parseParams(params *clouds.ResourceTokenCreationParams) (projects map[strin
 					bqdatasets[proj] = dr
 				}
 				dr[ds] = append(dr[ds], resolvedRole)
-				resolvedRole = "roles/bigquery.user"
 				jobProj, ok := item[jobProjectVariable]
 				if ok {
 					proj = jobProj
 				}
+				projects[proj] = append(projects[proj], "roles/bigquery.user")
+				continue
 			}
 
-			// Otherwise, store project-level configuration.
+			// Otherwise, only store project-level configuration.
 			projects[proj] = append(projects[proj], resolvedRole)
 		}
 	}

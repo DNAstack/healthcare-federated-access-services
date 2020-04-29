@@ -60,6 +60,15 @@
             "label": "GCS directory and file paths",
             "description": "A list of directories and files that may end in a '*' to indicate it is a prefix match"
           }
+        },
+        "userProject": {
+          "type": "const",
+          "regexp": "^[a-z]([-a-z0-9]*[a-z0-9])$",
+          "optional": true,
+          "ui": {
+            "label": "User Project for requester-pays buckets",
+            "description": "this DAM must have service consumer access to this project"
+          }
         }
       },
       "ui": {
