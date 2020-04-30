@@ -26,7 +26,6 @@ require (
   golang.org/x/exp v0.0.0-20190731235908-ec7cb31e5a56 // indirect
   golang.org/x/lint v0.0.0-20200302205851-738671d3881b // indirect
   golang.org/x/oauth2 v0.0.0-20190604053449-0f29369cfe45
-  golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e // indirect
   golang.org/x/sys v0.0.0-20191010194322-b09406accb47 // indirect
   golang.org/x/text v0.3.2
   golang.org/x/tools v0.0.0-20200409210453-700752c24408 // indirect
