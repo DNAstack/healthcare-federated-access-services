@@ -18,17 +18,18 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"strings"
 
-	"google.golang.org/grpc/codes" /* copybara-comment */
-	"google.golang.org/grpc/status" /* copybara-comment */
-	"golang.org/x/oauth2" /* copybara-comment */
-	"bitbucket.org/creachadair/stringset" /* copybara-comment */
-	"github.com/pborman/uuid" /* copybara-comment */
+	"bitbucket.org/creachadair/stringset"                                               /* copybara-comment */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/apis/hydraapi" /* copybara-comment: hydraapi */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/errutil" /* copybara-comment: errutil */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/errutil"   /* copybara-comment: errutil */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/httputils" /* copybara-comment: httputils */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/hydra" /* copybara-comment: hydra */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage" /* copybara-comment: storage */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/hydra"     /* copybara-comment: hydra */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage"   /* copybara-comment: storage */
+	"github.com/pborman/uuid"                                                           /* copybara-comment */
+	"golang.org/x/oauth2"                                                               /* copybara-comment */
+	"google.golang.org/grpc/codes"                                                      /* copybara-comment */
+	"google.golang.org/grpc/status"                                                     /* copybara-comment */
 
 	pb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/dam/v1" /* copybara-comment: go_proto */
 )
@@ -157,6 +158,13 @@ func (s *Service) hydraConsent(challenge string, consent *hydraapi.ConsentReques
 
 	tokenID := uuid.New()
 
+	var emailIds []string
+	for _, i := range identities {
+		if strings.Contains(i, "@") {
+			emailIds = append(emailIds, i)
+		}
+	}
+
 	req := &hydraapi.HandledConsentRequest{
 		GrantedAudience: append(consent.RequestedAudience, consent.Client.ClientID),
 		GrantedScope:    consent.RequestedScope,
@@ -165,7 +173,8 @@ func (s *Service) hydraConsent(challenge string, consent *hydraapi.ConsentReques
 				"tid": tokenID,
 			},
 			IDToken: map[string]interface{}{
-				"tid": tokenID,
+				"tid":        tokenID,
+				"identities": emailIds,
 			},
 		},
 	}
