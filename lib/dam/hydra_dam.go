@@ -144,12 +144,9 @@ func (s *Service) hydraConsent(challenge string, consent *hydraapi.ConsentReques
 		return "", sts.Err()
 	}
 
-	var stateID string
-	if len(identities) == 0 {
-		stateID, sts = hydra.ExtractStateIDInConsent(consent)
-		if sts != nil {
-			return "", sts.Err()
-		}
+	stateID, sts := hydra.ExtractStateIDInConsent(consent)
+	if sts != nil && sts.Err() != nil {
+		return "", sts.Err()
 	}
 
 	if len(identities) == 0 && len(stateID) == 0 {
@@ -181,7 +178,8 @@ func (s *Service) hydraConsent(challenge string, consent *hydraapi.ConsentReques
 
 	if len(stateID) > 0 {
 		req.Session.AccessToken["cart"] = stateID
-	} else if len(identities) > 0 {
+	}
+	if len(identities) > 0 {
 		req.Session.AccessToken["identities"] = identities
 	}
 

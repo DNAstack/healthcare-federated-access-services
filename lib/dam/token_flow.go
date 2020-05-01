@@ -505,6 +505,7 @@ func (s *Service) loggedInForDatasetToken(ctx context.Context, id *ga4gh.Identit
 	return &loggedInHandlerOut{
 		stateID: stateID,
 		subject: id.Subject,
+		identities: copyIdentities(id),
 	}, nil
 }
 
@@ -514,15 +515,18 @@ func (s *Service) loggedInForEndpointToken(id *ga4gh.Identity, state *pb.Resourc
 		return nil, status.Errorf(codes.Unavailable, err.Error())
 	}
 
+	return &loggedInHandlerOut{
+		subject:    id.Subject,
+		identities: copyIdentities(id),
+	}, nil
+}
+
+func copyIdentities(id *ga4gh.Identity) []string {
 	identities := []string{id.Subject}
 	for k := range id.Identities {
 		identities = append(identities, k)
 	}
-
-	return &loggedInHandlerOut{
-		subject:    id.Subject,
-		identities: identities,
-	}, nil
+	return identities
 }
 
 // ResourceTokens returns a set of access tokens for a set of resources.
