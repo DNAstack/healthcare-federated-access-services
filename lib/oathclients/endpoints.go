@@ -48,6 +48,7 @@ type ClientService interface {
 	RemoveClient(name string, cli *pb.Client)
 	Save(tx storage.Tx, desc, typeName string, r *http.Request, id *ga4gh.Identity, m *pb.ConfigModification) error
 	CheckIntegrity(r *http.Request, m *pb.ConfigModification) *status.Status
+	ClientSecret(tx storage.Tx, name string) string
 }
 
 //////////////////////////////////////////////////////////////////
@@ -284,7 +285,10 @@ func (c *adminClientHandler) Patch(r *http.Request, name string) (proto.Message,
 	}
 
 	out := proto.Clone(input).(*pb.Client)
-	sec := uuid.New()
+	var sec = uuid.New()
+	if cs := c.s.ClientSecret(c.tx, c.item.ClientId); len(cs) != 0 {
+		sec = cs
+	}
 
 	if c.useHydra {
 		hyCli := toHydraClient(input, name, sec, strfmt.NewDateTime())
