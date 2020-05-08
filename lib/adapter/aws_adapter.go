@@ -10,11 +10,18 @@ import (
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage"
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/timeutil" /* copybara-comment: timeutil */
 	pb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/dam/v1"
+	"time"
 )
 
 const (
 	AwsAdapterName = "aws"
     PlatformName   = "aws"
+)
+
+//FIXME need to be moved to config, also the values
+const (
+	defaultGcFrequency    = 1 * 24 * time.Hour  /* 1 day */
+	defaultKeysPerAccount = 2
 )
 
 type AwsAdapter struct {
@@ -28,10 +35,22 @@ func NewAwsAdapter(store storage.Store, warehouse clouds.ResourceTokenCreator, s
 	if err := srcutil.LoadProto(path, &msg); err != nil {
 		return nil, fmt.Errorf("reading %q service descriptors from path %q: %v", aggregatorName, path, err)
 	}
-
-	wh, err := aws.NewWarehouse(store)
+	ctx := context.Background()
+	wh, err := aws.NewWarehouse(ctx, store)
 	if err != nil {
 		return nil, fmt.Errorf("error creating AWS key warehouse: %v", err)
+	}
+
+	//Register Accounts
+	if err := aws.RegisterAccountGC(store, wh); err != nil {
+		return nil, fmt.Errorf("error registering AWS account key GC: %v", err)
+	}
+
+	// QUESTION: Is this the right place
+	// Update Settings
+	ttl := defaultGcFrequency
+	if err := wh.UpdateSettings(ttl, defaultKeysPerAccount, nil); err != nil {
+		return nil, fmt.Errorf("error updating settings: %v", err)
 	}
 
 	return &AwsAdapter{

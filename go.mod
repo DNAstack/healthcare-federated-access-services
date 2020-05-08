@@ -25,6 +25,7 @@ require (
   golang.org/x/crypto v0.0.0-20191011191535-87dc89f01550
   golang.org/x/exp v0.0.0-20190731235908-ec7cb31e5a56 // indirect
   golang.org/x/lint v0.0.0-20200302205851-738671d3881b // indirect
+  golang.org/x/net v0.0.0-20200226121028-0de0cce0169b
   golang.org/x/oauth2 v0.0.0-20190604053449-0f29369cfe45
   golang.org/x/sys v0.0.0-20191010194322-b09406accb47 // indirect
   golang.org/x/text v0.3.2
