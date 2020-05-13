@@ -37,9 +37,11 @@ func (s *Service) configFactory() *handlerfactory.Options {
 		TypeName:            "config",
 		PathPrefix:          configPath,
 		HasNamedIdentifiers: false,
-		Service: &config{
-			s:     s,
-			input: &pb.ConfigRequest{},
+		Service: func() handlerfactory.Service {
+			return &config{
+				s:     s,
+				input: &pb.ConfigRequest{},
+			}
 		},
 	}
 }
@@ -150,9 +152,11 @@ func (s *Service) configIdpFactory() *handlerfactory.Options {
 		TypeName:            "configIDP",
 		PathPrefix:          configIdentityProvidersPath,
 		HasNamedIdentifiers: true,
-		Service: &configIDP{
-			s:     s,
-			input: &pb.ConfigIdentityProviderRequest{},
+		Service: func() handlerfactory.Service {
+			return &configIDP{
+				s:     s,
+				input: &pb.ConfigIdentityProviderRequest{},
+			}
 		},
 	}
 }
@@ -253,9 +257,11 @@ func (s *Service) configOptionsFactory() *handlerfactory.Options {
 		TypeName:            "configOptions",
 		PathPrefix:          configOptionsPath,
 		HasNamedIdentifiers: false,
-		Service: &configOptions{
-			s:     s,
-			input: &pb.ConfigOptionsRequest{},
+		Service: func() handlerfactory.Service {
+			return &configOptions{
+				s:     s,
+				input: &pb.ConfigOptionsRequest{},
+			}
 		},
 	}
 }
@@ -400,7 +406,7 @@ func (s *Service) ConfigReset(w http.ResponseWriter, r *http.Request) {
 		httputils.WriteError(w, status.Errorf(codes.Internal, "%v", err))
 		return
 	}
-	if err = ImportConfig(s.store, s.serviceName, nil); err != nil {
+	if err = ImportConfig(s.store, s.serviceName, nil, true, true, true); err != nil {
 		httputils.WriteError(w, status.Errorf(codes.Internal, "%v", err))
 		return
 	}

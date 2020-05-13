@@ -17,16 +17,21 @@ package auditlogsapi
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
 	"cloud.google.com/go/logging" /* copybara-comment: logging */
 	"github.com/google/go-cmp/cmp" /* copybara-comment */
 	"google.golang.org/api/option" /* copybara-comment: option */
+	"github.com/gorilla/mux" /* copybara-comment */
 	"google.golang.org/grpc" /* copybara-comment */
 	"google.golang.org/protobuf/testing/protocmp" /* copybara-comment */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/auditlog" /* copybara-comment: auditlog */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/handlerfactory" /* copybara-comment: handlerfactory */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/httputils" /* copybara-comment: httputils */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage" /* copybara-comment: storage */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/test/fakegrpc" /* copybara-comment: fakegrpc */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/test/fakesdl" /* copybara-comment: fakesdl */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/timeutil" /* copybara-comment: timeutil */
@@ -43,8 +48,6 @@ func Test_AccessLog(t *testing.T) {
 
 	f, close := newFix(t, project)
 	defer close()
-
-	s := NewAuditLogs(f.logs, project)
 
 	before := time.Now()
 	auditlog.LogSync = true
@@ -64,22 +67,36 @@ func Test_AccessLog(t *testing.T) {
 	}
 	auditlog.WriteAccessLog(ctx, f.logger, al)
 	pl := &auditlog.PolicyDecisionLog{
-		TokenID:       "tid",
-		TokenSubject:  "sub",
-		TokenIssuer:   "http://issuer.example.com",
-		Resource:      "http://example.com/dam/v1alpha/resources/a-dataset/roles/viewer",
-		TTL:           "1d",
-		PassAuthCheck: false,
-		ErrorType:     "untrusted_issuer",
-		Message:       `{"error": "This is a json err"}`,
+		TokenID:        "tid",
+		TokenSubject:   "sub",
+		TokenIssuer:    "http://issuer.example.com",
+		Resource:       "http://example.com/dam/v1alpha/resources/a-dataset/roles/viewer",
+		TTL:            "1d",
+		PassAuthCheck:  false,
+		ErrorType:      "untrusted_issuer",
+		CartID:         "cart_id",
+		ConfigRevision: 0,
+		Message:        `{"error": "This is a json err"}`,
 	}
 	auditlog.WritePolicyDecisionLog(f.logger, pl)
 	after := time.Now()
 
-	got, err := s.ListAuditLogs(ctx, &apb.ListAuditLogsRequest{Parent: "users/fake-user"})
-	if err != nil {
-		t.Fatalf("ListAuditLogs() failed: %v", err)
+	u, _ := url.Parse("https://example.com/dam/v1alpha/users/fake-user/auditlogs")
+	q := url.Values{}
+	q.Add("page_size", "1")
+	u.RawQuery = q.Encode()
+	r := httptest.NewRequest(http.MethodGet, u.String(), nil)
+	w := httptest.NewRecorder()
+
+	f.router.ServeHTTP(w, r)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, wants %d", resp.StatusCode, http.StatusOK)
 	}
+
+	got := &apb.ListAuditLogsResponse{}
+	httputils.MustDecodeJSONPBResp(t, resp, got)
 
 	// Check time for logs and set to nil.
 	var ts time.Time
@@ -101,10 +118,11 @@ func Test_AccessLog(t *testing.T) {
 	}
 
 	// TODO: use protocmp.IgnoreFields(&apb.AccessLog{}, "time") instead when it works.
+
 	want := &apb.ListAuditLogsResponse{
 		AuditLogs: []*apb.AuditLog{
 			{
-				Name: "users/todo-user-id/auditlogs/",
+				Name: "users/sub@http:%2F%2Fissuer.example.com/auditlogs/",
 				AccessLog: &apb.AccessLog{
 					ServiceName:      "unset-serviceinfo-Name",
 					ServiceType:      "unset-serviceinfo-Type",
@@ -123,18 +141,20 @@ func Test_AccessLog(t *testing.T) {
 				},
 			},
 			{
-				Name: "users/todo-user-id/auditlogs/",
+				Name: "users/sub@http:%2F%2Fissuer.example.com/auditlogs/",
 				PolicyLog: &apb.PolicyLog{
-					ServiceName:  "unset-serviceinfo-Name",
-					ServiceType:  "unset-serviceinfo-Type",
-					TokenId:      "tid",
-					TokenSubject: "sub",
-					TokenIssuer:  "http://issuer.example.com",
-					Decision:     apb.Decision_FAIL,
-					ErrorType:    "untrusted_issuer",
-					Reason:       `{"error": "This is a json err"}`,
-					ResourceName: "http://example.com/dam/v1alpha/resources/a-dataset/roles/viewer",
-					Ttl:          &dpb.Duration{Seconds: 86400},
+					ServiceName:    "unset-serviceinfo-Name",
+					ServiceType:    "unset-serviceinfo-Type",
+					TokenId:        "tid",
+					TokenSubject:   "sub",
+					TokenIssuer:    "http://issuer.example.com",
+					Decision:       apb.Decision_FAIL,
+					ErrorType:      "untrusted_issuer",
+					Reason:         `{"error": "This is a json err"}`,
+					ResourceName:   "http://example.com/dam/v1alpha/resources/a-dataset/roles/viewer",
+					Ttl:            &dpb.Duration{Seconds: 86400},
+					CartId:         "cart_id",
+					ConfigRevision: "0",
 				},
 			},
 		},
@@ -146,6 +166,7 @@ func Test_AccessLog(t *testing.T) {
 
 // Fix is a test fixture.
 type Fix struct {
+	router *mux.Router
 	rpc    *fakegrpc.Fake
 	logSrv *fakesdl.Server
 	logs   lgrpcpb.LoggingServiceV2Client
@@ -178,6 +199,10 @@ func newFix(t *testing.T, project string) (*Fix, func() error) {
 	if err != nil {
 		t.Fatalf("logging.NewClient() failed: %v", err)
 	}
+
+	store := storage.NewMemoryStorage("dam-min", "testdata/config")
+	f.router = mux.NewRouter()
+	f.router.HandleFunc("/dam/v1alpha/users/{user}/auditlogs", handlerfactory.MakeHandler(store, ListAuditlogsPathFactory("/dam/users/{user}/auditlogs", NewAuditLogs(f.logs, project, "dam"))))
 
 	return f, cleanup
 }

@@ -25,11 +25,13 @@ import (
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh" /* copybara-comment: ga4gh */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/handlerfactory" /* copybara-comment: handlerfactory */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/kms/fakeencryption" /* copybara-comment: fakeencryption */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/permissions" /* copybara-comment: permissions */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage" /* copybara-comment: storage */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/test/fakeoidcissuer" /* copybara-comment: fakeoidcissuer */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/test" /* copybara-comment: test */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/testkeys" /* copybara-comment: testkeys */
 
+	glog "github.com/golang/glog" /* copybara-comment */
 	cpb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/common/v1" /* copybara-comment: go_proto */
 )
 
@@ -166,12 +168,12 @@ type service struct {
 
 func serviceNew(store storage.Store, client *http.Client) *service {
 	checker := &auth.Checker{
-		Logger: nil,
-		Issuer: hydraPublicURL,
+		Logger:      nil,
+		Issuer:      hydraPublicURL,
+		Permissions: permissions.New(store),
 		FetchClientSecrets: func() (map[string]string, error) {
 			return map[string]string{test.TestClientID: test.TestClientSecret}, nil
 		},
-		IsAdmin:           func(id *ga4gh.Identity) error { return nil },
 		TransformIdentity: func(id *ga4gh.Identity) *ga4gh.Identity { return id },
 	}
 	crypt := fakeencryption.New()
@@ -179,7 +181,11 @@ func serviceNew(store storage.Store, client *http.Client) *service {
 	r := mux.NewRouter()
 	r.HandleFunc(cliRegisterPath, auth.MustWithAuth(handlerfactory.MakeHandler(store, RegisterFactory(store, cliRegisterPath, crypt, domainURL+cliAuthPath, hydraPublicURL, hydraAuthURL, hydraTokenURL, cliAcceptPath, client)), checker, auth.RequireClientIDAndSecret))
 	r.HandleFunc(cliAuthPath, auth.MustWithAuth(NewAuthHandler(store).Handle, checker, auth.RequireNone)).Methods(http.MethodGet)
-	r.HandleFunc(cliAcceptPath, auth.MustWithAuth(NewAcceptHandler(store, crypt, "/test").Handle, checker, auth.RequireNone)).Methods(http.MethodGet)
+	accept, err := NewAcceptHandler(store, crypt, "/test")
+	if err != nil {
+		glog.Fatalf("NewAcceptHandler() failed: %v", err)
+	}
+	r.HandleFunc(cliAcceptPath, auth.MustWithAuth(accept.Handle, checker, auth.RequireNone)).Methods(http.MethodGet)
 
 	return &service{
 		Handler: r,

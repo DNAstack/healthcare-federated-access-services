@@ -33,9 +33,11 @@ func (s *Service) realmFactory() *handlerfactory.Options {
 		NameField:           "realm",
 		PathPrefix:          realmPath,
 		HasNamedIdentifiers: true,
-		Service: &realm{
-			s:     s,
-			input: &pb.RealmRequest{},
+		Service: func() handlerfactory.Service {
+			return &realm{
+				s:     s,
+				input: &pb.RealmRequest{},
+			}
 		},
 	}
 }
@@ -101,7 +103,7 @@ func (c *realm) Remove(r *http.Request, name string) (proto.Message, error) {
 		return nil, err
 	}
 	if name == storage.DefaultRealm {
-		return nil, ImportConfig(c.s.store, c.s.serviceName, nil)
+		return nil, ImportConfig(c.s.store, c.s.serviceName, nil, true, true, true)
 	}
 	return nil, nil
 }

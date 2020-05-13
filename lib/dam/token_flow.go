@@ -30,6 +30,7 @@ import (
 	"github.com/pborman/uuid" /* copybara-comment */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/adapter" /* copybara-comment: adapter */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/auditlog" /* copybara-comment: auditlog */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/auth" /* copybara-comment: auth */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/errutil" /* copybara-comment: errutil */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh" /* copybara-comment: ga4gh */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/httputils" /* copybara-comment: httputils */
@@ -127,7 +128,7 @@ func (s *Service) generateResourceToken(ctx context.Context, clientID, resourceN
 	adapterAction := &adapter.Action{
 		Aggregates:      aggregates,
 		Identity:        id,
-		Issuer:          s.getIssuerString(),
+		Issuer:          s.gatekeeperTokenIssuerURL(),
 		ClientID:        clientID,
 		Config:          cfg,
 		GrantRole:       role,
@@ -144,15 +145,6 @@ func (s *Service) generateResourceToken(ctx context.Context, clientID, resourceN
 	result, err := adapt.MintToken(ctx, adapterAction)
 	if err != nil {
 		return nil, http.StatusServiceUnavailable, err
-	}
-
-	if httputils.IsJSON(result.TokenFormat) && result.Credentials != nil {
-		return &pb.ResourceResults_ResourceAccess{
-			Credentials: map[string]string{"key_file": result.Credentials["json"]},
-		}, http.StatusOK, nil
-	}
-	if useKeyFile {
-		return nil, http.StatusBadRequest, fmt.Errorf("adapter cannot create key file format")
 	}
 
 	return &pb.ResourceResults_ResourceAccess{
@@ -452,14 +444,16 @@ func resourceToString(res *pb.ResourceTokenRequestState_Resource) string {
 	return fmt.Sprintf("%s/%s/%s/%s", res.Realm, res.Resource, res.View, res.Role)
 }
 
-func writePolicyDeccisionLog(logger *logging.Client, id *ga4gh.Identity, res *pb.ResourceTokenRequestState_Resource, ttl time.Duration, err error) {
+func writePolicyDeccisionLog(logger *logging.Client, id *ga4gh.Identity, res *pb.ResourceTokenRequestState_Resource, ttl time.Duration, cartID string, cfgRevision int64, err error) {
 	log := &auditlog.PolicyDecisionLog{
-		TokenID:       id.ID,
-		TokenSubject:  id.Subject,
-		TokenIssuer:   id.Issuer,
-		Resource:      resourceToString(res),
-		TTL:           timeutil.TTLString(ttl),
-		PassAuthCheck: true,
+		TokenID:        id.ID,
+		TokenSubject:   id.Subject,
+		TokenIssuer:    id.Issuer,
+		Resource:       resourceToString(res),
+		TTL:            timeutil.TTLString(ttl),
+		PassAuthCheck:  true,
+		CartID:         cartID,
+		ConfigRevision: cfgRevision,
 	}
 
 	if err != nil {
@@ -489,7 +483,7 @@ func (s *Service) loggedInForDatasetToken(ctx context.Context, id *ga4gh.Identit
 		}
 
 		err := checkAuthorization(ctx, id, ttl, r.Resource, r.View, r.Role, cfg, state.ClientId, s.ValidateCfgOpts(realm, tx))
-		writePolicyDeccisionLog(s.logger, id, r, ttl, err)
+		writePolicyDeccisionLog(s.logger, id, r, ttl, stateID, cfg.Revision, err)
 		if err != nil {
 			return nil, err
 		}
@@ -551,14 +545,14 @@ func (s *Service) fetchResourceTokens(r *http.Request) (_ *pb.ResourceResults, f
 		}
 	}()
 
-	auth, err := extractBearerToken(r)
+	a, err := auth.FromContext(r.Context())
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
+		return nil, err
 	}
 
 	cart := ""
 	if s.useHydra {
-		cart, err = s.extractCartFromAccessToken(auth)
+		cart, err = s.extractCartFromAccessToken(a.ID)
 		if err != nil {
 			return nil, err
 		}

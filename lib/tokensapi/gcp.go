@@ -1,4 +1,4 @@
-// Copyright 2019 Google LLC
+// Copyright 2020 Google LLC.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,35 +17,65 @@ package tokensapi
 import (
 	"context"
 
+	"google.golang.org/grpc/codes" /* copybara-comment */
+	"google.golang.org/grpc/status" /* copybara-comment */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/adapter" /* copybara-comment: adapter */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh" /* copybara-comment: ga4gh */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/saw" /* copybara-comment: saw */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage" /* copybara-comment: storage */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/timeutil" /* copybara-comment: timeutil */
-
-	tpb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/tokens/v1" /* copybara-comment: go_proto */
 )
 
-// GCPDeleteToken revokes a token.
-// ids are project ID, user ID, and token ID.
-func (s *DAMTokens) GCPDeleteToken(ctx context.Context, ids []string) error {
-	if err := s.saw.DeleteTokens(ctx, ids[0], ids[1], []string{ids[2]}); err != nil {
-		return err
-	}
-	return nil
+// GCP tokens management, implments TokenProvider interface.
+type GCP struct {
+	saProject     string
+	defaultBroker string
+	saw           *saw.AccountWarehouse
 }
 
-// GCPListTokens lists the tokens.
-// ids are project ID and user ID.
-func (s *DAMTokens) GCPListTokens(ctx context.Context, ids []string) ([]*tpb.Token, error) {
-	vs, err := s.saw.ListTokenMetadata(ctx, ids[0], ids[1])
-	if err != nil {
-		return nil, err
+// NewGCPTokenManager creates a GCP object
+func NewGCPTokenManager(saProject, defaultBroker string, saw *saw.AccountWarehouse) *GCP {
+	return &GCP{
+		saProject:     saProject,
+		defaultBroker: defaultBroker,
+		saw:           saw,
 	}
-	var tokens []*tpb.Token
+}
+
+// ListTokens lists the tokens.
+func (s *GCP) ListTokens(ctx context.Context, user string, store storage.Store, tx storage.Tx) ([]*Token, error) {
+	userID := ga4gh.TokenUserID(&ga4gh.Identity{Subject: user, Issuer: s.defaultBroker}, adapter.SawMaxUserIDLength)
+	vs, err := s.saw.ListTokenMetadata(ctx, s.saProject, userID)
+	if err != nil {
+		// TODO: Should pass error from GRPC call to here for better error code.
+		return nil, status.Errorf(codes.Unavailable, "list gcp tokens failed: %v", err)
+	}
+	var tokens []*Token
 	for _, v := range vs {
-		t := &tpb.Token{
-			Name:      "users/" + ids[1] + "/tokens/" + v.GetName(),
-			IssuedAt:  timeutil.ParseRFC3339(v.GetIssuedAt()).Unix(),
-			ExpiresAt: timeutil.ParseRFC3339(v.GetExpires()).Unix(),
+		t := &Token{
+			User:        user,
+			RawTokenID:  v.Name,
+			TokenPrefix: s.TokenPrefix(),
+			IssuedAt:    timeutil.ParseRFC3339(v.IssuedAt).Unix(),
+			ExpiresAt:   timeutil.ParseRFC3339(v.Expires).Unix(),
+			Platform:    s.TokenPrefix(),
 		}
 		tokens = append(tokens, t)
 	}
 	return tokens, nil
+}
+
+// DeleteToken revokes a token.
+func (s *GCP) DeleteToken(ctx context.Context, user, tokenID string, store storage.Store, tx storage.Tx) error {
+	userID := ga4gh.TokenUserID(&ga4gh.Identity{Subject: user, Issuer: s.defaultBroker}, adapter.SawMaxUserIDLength)
+	if err := s.saw.DeleteTokens(ctx, s.saProject, userID, []string{tokenID}); err != nil {
+		// TODO: Should pass error from GRPC call to here for better error code.
+		return status.Errorf(codes.Unavailable, "delete gcp token failed: %v", err)
+	}
+	return nil
+}
+
+// TokenPrefix of GCP provided tokens.
+func (s *GCP) TokenPrefix() string {
+	return "gcp"
 }

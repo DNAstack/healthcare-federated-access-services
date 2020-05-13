@@ -35,9 +35,10 @@ type ResourceTokenCreationParams struct {
 
 // ResourceTokenResult is returned from GetTokenWithTTL().
 type ResourceTokenResult struct {
-	Account string
-	Token   string
-	Format  string
+	Account    string
+	Token      string
+	AccountKey string
+	Format     string
 }
 
 // AwsResourceTokenResult is returned from GetTokenWithTTL() for aws adapter.

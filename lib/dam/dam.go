@@ -45,6 +45,7 @@ import (
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/clouds" /* copybara-comment: clouds */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/consentsapi" /* copybara-comment: consentsapi */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/errutil" /* copybara-comment: errutil */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/faketokensapi" /* copybara-comment: faketokensapi */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh" /* copybara-comment: ga4gh */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/handlerfactory" /* copybara-comment: handlerfactory */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/httputils" /* copybara-comment: httputils */
@@ -64,7 +65,6 @@ import (
 
 	glog "github.com/golang/glog" /* copybara-comment */
 	lgrpcpb "google.golang.org/genproto/googleapis/logging/v2" /* copybara-comment: logging_go_grpc */
-	agrpcpb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/auditlogs/v0" /* copybara-comment: auditlogs_go_grpc_proto */
 	cpb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/common/v1" /* copybara-comment: go_proto */
 	pb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/dam/v1" /* copybara-comment: go_proto */
 	tgrpcpb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/tokens/v1" /* copybara-comment: go_proto_grpc */
@@ -105,7 +105,6 @@ type Service struct {
 	store               storage.Store
 	warehouse           clouds.ResourceTokenCreator
 	logger              *logging.Client
-	permissions         *permissions.Permissions
 	Handler             *ServiceHandler
 	hidePolicyBasis     bool
 	hideRejectDetail    bool
@@ -116,7 +115,8 @@ type Service struct {
 	visaVerifier        *verifier.Verifier
 	scim                *scim.Scim
 	tokens              tgrpcpb.TokensServer
-	auditlogs           agrpcpb.AuditLogsServer
+	auditlogs           *auditlogsapi.AuditLogs
+	tokenProviders      []tokensapi.TokenProvider
 }
 
 type ServiceHandler struct {
@@ -173,10 +173,6 @@ func New(r *mux.Router, params *Options) *Service {
 	if err := srcutil.LoadProto("deploy/metadata/dam_roles.json", &roleCat); err != nil {
 		glog.Exitf("cannot load role categories file %q: %v", "deploy/metadata/dam_roles.json", err)
 	}
-	perms, err := permissions.LoadPermissions(params.Store)
-	if err != nil {
-		glog.Exitf("cannot load permissions: %v", err)
-	}
 	syncFreq := time.Minute
 	if params.HydraSyncFreq > 0 {
 		syncFreq = params.HydraSyncFreq
@@ -191,7 +187,6 @@ func New(r *mux.Router, params *Options) *Service {
 		store:               params.Store,
 		warehouse:           params.Warehouse,
 		logger:              params.Logger,
-		permissions:         perms,
 		Handler:             sh,
 		hidePolicyBasis:     params.HidePolicyBasis,
 		hideRejectDetail:    params.HideRejectDetail,
@@ -204,8 +199,8 @@ func New(r *mux.Router, params *Options) *Service {
 		hydraSyncFreq:       syncFreq,
 		visaVerifier:        verifier.New(""),
 		scim:                scim.New(params.Store),
-		tokens:              tokensapi.NewDAMTokens(params.Store, params.ServiceAccountManager),
-		auditlogs:           auditlogsapi.NewAuditLogs(params.SDLC, params.AuditLogProject),
+		tokens:              faketokensapi.NewDAMTokens(params.Store, params.ServiceAccountManager),
+		auditlogs:           auditlogsapi.NewAuditLogs(params.SDLC, params.AuditLogProject, params.ServiceName),
 	}
 
 	if s.httpClient == nil {
@@ -217,7 +212,7 @@ func New(r *mux.Router, params *Options) *Service {
 		glog.Exitf("cannot use storage layer: %v", err)
 	}
 	if !exists {
-		if err = ImportConfig(params.Store, params.ServiceName, params.Warehouse, nil); err != nil {
+		if err = ImportConfig(params.Store, params.ServiceName, params.Warehouse, nil, true, true, true); err != nil {
 			glog.Exitf("cannot import configs to service %q: %v", params.ServiceName, err)
 		}
 	}
@@ -258,6 +253,17 @@ func New(r *mux.Router, params *Options) *Service {
 	}
 
 	s.syncToHydra(cfg.Clients, secrets.ClientSecrets, 30*time.Second, nil)
+
+	defaultBrokerURL := ""
+	if broker, ok := cfg.TrustedIssuers[params.DefaultBroker]; ok {
+		defaultBrokerURL = broker.Issuer
+	}
+	s.tokenProviders = []tokensapi.TokenProvider{
+		tokensapi.NewGCPTokenManager(cfg.Options.GcpServiceAccountProject, defaultBrokerURL, params.ServiceAccountManager),
+	}
+	if s.useHydra {
+		s.tokenProviders = append(s.tokenProviders, tokensapi.NewHydraTokenManager(s.hydraAdminURL, s.getIssuerString(), s.clients))
+	}
 
 	sh.s = s
 	sh.Handler = r
@@ -705,18 +711,6 @@ func isAggregate(serviceName string, tas *adapter.ServiceAdapters) bool {
 		return false
 	}
 	return desc.Properties.IsAggregate
-}
-
-func isHTTPS(in string) bool {
-	return strings.HasPrefix(in, "https://") && strings.Contains(in, ".")
-}
-
-func isLocalhost(in string) bool {
-	url, err := url.Parse(in)
-	if err != nil {
-		return false
-	}
-	return url.Hostname() == "localhost"
 }
 
 func configRevision(mod *pb.ConfigModification, cfg *pb.DamConfig) error {
@@ -1287,7 +1281,7 @@ func (s *Service) updateWarehouseOptions(opts *pb.ConfigOptions, realm string, t
 }
 
 // ImportConfig ingests bootstrap configuration files to the DAM's storage sytem.
-func ImportConfig(store storage.Store, service string, warehouse clouds.ResourceTokenCreator, cfgVars map[string]string) (ferr error) {
+func ImportConfig(store storage.Store, service string, warehouse clouds.ResourceTokenCreator, cfgVars map[string]string, importConfig, importSecrets, importPermission bool) (ferr error) {
 	fs := getFileStore(store, service)
 	glog.Infof("import DAM config %q into data store", fs.Info()["service"])
 	tx, err := store.Tx(true)
@@ -1307,29 +1301,49 @@ func ImportConfig(store storage.Store, service string, warehouse clouds.Resource
 		CommitTime: float64(time.Now().Unix()),
 		Desc:       "Initial config",
 	}
-	cfg := &pb.DamConfig{}
 
+	cfg := &pb.DamConfig{}
 	if err = fs.Read(storage.ConfigDatatype, storage.DefaultRealm, storage.DefaultUser, storage.DefaultID, storage.LatestRev, cfg); err != nil {
 		return err
 	}
-	history.Revision = cfg.Revision
-	if err = storage.ReplaceContentVariables(cfg, cfgVars); err != nil {
-		return fmt.Errorf("replacing variables on config file: %v", err)
+	if importConfig {
+		history.Revision = cfg.Revision
+		if err = storage.ReplaceContentVariables(cfg, cfgVars); err != nil {
+			return fmt.Errorf("replacing variables on config file: %v", err)
+		}
+		if err = store.WriteTx(storage.ConfigDatatype, storage.DefaultRealm, storage.DefaultUser, storage.DefaultID, cfg.Revision, cfg, history, tx); err != nil {
+			return err
+		}
 	}
-	if err = store.WriteTx(storage.ConfigDatatype, storage.DefaultRealm, storage.DefaultUser, storage.DefaultID, cfg.Revision, cfg, history, tx); err != nil {
-		return err
+
+	if importSecrets {
+		secrets := &pb.DamSecrets{}
+		if err = fs.Read(storage.SecretsDatatype, storage.DefaultRealm, storage.DefaultUser, storage.DefaultID, storage.LatestRev, secrets); err != nil {
+			return err
+		}
+		history.Revision = secrets.Revision
+		if err = storage.ReplaceContentVariables(secrets, cfgVars); err != nil {
+			return fmt.Errorf("replacing variables on secrets file: %v", err)
+		}
+		if err = store.WriteTx(storage.SecretsDatatype, storage.DefaultRealm, storage.DefaultUser, storage.DefaultID, secrets.Revision, secrets, history, tx); err != nil {
+			return err
+		}
 	}
-	secrets := &pb.DamSecrets{}
-	if err = fs.Read(storage.SecretsDatatype, storage.DefaultRealm, storage.DefaultUser, storage.DefaultID, storage.LatestRev, secrets); err != nil {
-		return err
+
+	if importPermission {
+		perm := &cpb.Permissions{}
+		if err = fs.Read(storage.PermissionsDatatype, storage.DefaultRealm, storage.DefaultUser, storage.DefaultID, storage.LatestRev, perm); err != nil {
+			return err
+		}
+		history.Revision = perm.Revision
+		if err = storage.ReplaceContentVariables(perm, cfgVars); err != nil {
+			return fmt.Errorf("replacing variables on permissions file: %v", err)
+		}
+		if err = store.WriteTx(storage.PermissionsDatatype, storage.DefaultRealm, storage.DefaultUser, storage.DefaultID, perm.Revision, perm, history, tx); err != nil {
+			return err
+		}
 	}
-	history.Revision = secrets.Revision
-	if err = storage.ReplaceContentVariables(secrets, cfgVars); err != nil {
-		return fmt.Errorf("replacing variables on secrets file: %v", err)
-	}
-	if err = store.WriteTx(storage.SecretsDatatype, storage.DefaultRealm, storage.DefaultUser, storage.DefaultID, secrets.Revision, secrets, history, tx); err != nil {
-		return err
-	}
+
 	if warehouse == nil {
 		return nil
 	}
@@ -1350,19 +1364,31 @@ func getFileStore(store storage.Store, service string) storage.Store {
 	return storage.NewFileStorage(service, path)
 }
 
+// clients fetchs oauth clients
+func (s *Service) clients(tx storage.Tx) (map[string]*cpb.Client, error) {
+	cfg, err := s.loadConfig(tx, storage.DefaultRealm)
+	if err != nil {
+		return nil, status.Errorf(codes.Unavailable, "load clients failed: %v", err)
+	}
+
+	return cfg.Clients, nil
+}
+
 // TODO: move registeration of endpoints to main package.
 func registerHandlers(r *mux.Router, s *Service) {
 	a := &authChecker{s: s}
 	checker := &auth.Checker{
 		Logger:             s.logger,
 		Issuer:             s.getIssuerString(),
+		Permissions:        permissions.New(s.store),
 		FetchClientSecrets: a.fetchClientSecrets,
-		IsAdmin:            a.isAdmin,
 		TransformIdentity:  a.transformIdentity,
 	}
 
 	// info endpoint
 	r.HandleFunc(infoPath, auth.MustWithAuth(s.GetInfo, checker, auth.RequireNone)).Methods(http.MethodGet)
+	r.HandleFunc(oidcConfiguarePath, auth.MustWithAuth(s.OidcWellKnownConfig, checker, auth.RequireNone)).Methods(http.MethodGet)
+	r.HandleFunc(oidcJwksPath, auth.MustWithAuth(s.OidcKeys, checker, auth.RequireNone)).Methods(http.MethodGet)
 
 	// readonly config endpoints
 	r.HandleFunc(clientPath, auth.MustWithAuth(handlerfactory.MakeHandler(s.GetStore(), s.clientFactory()), checker, auth.RequireClientIDAndSecret))
@@ -1417,8 +1443,12 @@ func registerHandlers(r *mux.Router, s *Service) {
 	r.HandleFunc(resourceTokensPath, auth.MustWithAuth(s.ResourceTokens, checker, auth.RequireUserToken)).Methods(http.MethodGet, http.MethodPost)
 
 	// token service endpoints
-	r.HandleFunc(tokensPath, auth.MustWithAuth(tokensapi.NewTokensHandler(s.tokens).ListTokens, checker, auth.RequireUserToken)).Methods(http.MethodGet)
-	r.HandleFunc(tokenPath, auth.MustWithAuth(tokensapi.NewTokensHandler(s.tokens).DeleteToken, checker, auth.RequireUserToken)).Methods(http.MethodDelete)
+	r.HandleFunc(tokensPath, auth.MustWithAuth(handlerfactory.MakeHandler(s.store, tokensapi.ListTokensFactory(tokensPath, s.tokenProviders, s.store)), checker, auth.RequireUserToken)).Methods(http.MethodGet)
+	r.HandleFunc(tokenPath, auth.MustWithAuth(handlerfactory.MakeHandler(s.store, tokensapi.DeleteTokenFactory(tokenPath, s.tokenProviders, s.store)), checker, auth.RequireUserToken)).Methods(http.MethodDelete)
+
+	// TODO: to remove.
+	r.HandleFunc(fakeTokensPath, auth.MustWithAuth(faketokensapi.NewTokensHandler(s.tokens).ListTokens, checker, auth.RequireUserToken)).Methods(http.MethodGet)
+	r.HandleFunc(fakeTokenPath, auth.MustWithAuth(faketokensapi.NewTokensHandler(s.tokens).DeleteToken, checker, auth.RequireUserToken)).Methods(http.MethodDelete)
 
 	// consents service endpoints
 	consents := &consentsapi.StubConsents{Consent: consentsapi.FakeConsent}
@@ -1426,7 +1456,7 @@ func registerHandlers(r *mux.Router, s *Service) {
 	r.HandleFunc(consentPath, auth.MustWithAuth(consentsapi.NewMockConsentsHandler(consents).DeleteConsent, checker, auth.RequireUserToken)).Methods(http.MethodDelete)
 
 	// audit logs endpoints
-	r.HandleFunc(auditlogsPath, auth.MustWithAuth(auditlogsapi.NewAuditLogsHandler(s.auditlogs).ListAuditLogs, checker, auth.RequireUserToken)).Methods(http.MethodGet)
+	r.HandleFunc(auditlogsPath, auth.MustWithAuth(handlerfactory.MakeHandler(s.store, auditlogsapi.ListAuditlogsPathFactory(auditlogsPath, s.auditlogs)), checker, auth.RequireUserToken)).Methods(http.MethodGet)
 
 	// proxy hydra oauth token endpoint
 	if s.hydraPublicURLProxy != nil {
