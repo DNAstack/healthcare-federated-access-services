@@ -43,10 +43,12 @@ import (
 	"github.com/golang/protobuf/jsonpb" /* copybara-comment */
 	"github.com/golang/protobuf/proto" /* copybara-comment */
 	"github.com/pborman/uuid" /* copybara-comment */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/auditlogsapi" /* copybara-comment: auditlogsapi */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/auth" /* copybara-comment: auth */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/check" /* copybara-comment: check */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/cli" /* copybara-comment: cli */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/consentsapi" /* copybara-comment: consentsapi */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/faketokensapi" /* copybara-comment: faketokensapi */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh" /* copybara-comment: ga4gh */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/handlerfactory" /* copybara-comment: handlerfactory */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/httputils" /* copybara-comment: httputils */
@@ -63,6 +65,7 @@ import (
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/translator" /* copybara-comment: translator */
 
 	glog "github.com/golang/glog" /* copybara-comment */
+	lgrpcpb "google.golang.org/genproto/googleapis/logging/v2" /* copybara-comment: logging_go_grpc */
 	cpb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/common/v1" /* copybara-comment: go_proto */
 	pb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/ic/v1" /* copybara-comment: go_proto */
 )
@@ -216,11 +219,10 @@ type Service struct {
 	store                      storage.Store
 	Handler                    *ServiceHandler
 	httpClient                 *http.Client
-	loginPage                  string
-	clientLoginPage            string
+	loginPageTmpl              *template.Template
+	clientLoginPageTmpl        *template.Template
 	infomationReleasePageTmpl  *template.Template
 	startTime                  int64
-	permissions                *permissions.Permissions
 	domain                     string
 	serviceName                string
 	accountDomain              string
@@ -234,6 +236,10 @@ type Service struct {
 	useHydra                   bool
 	hydraSyncFreq              time.Duration
 	scim                       *scim.Scim
+	cliAcceptHandler           *cli.AcceptHandler
+	consentDashboardURL        string
+	tokenProviders             []tokensapi.TokenProvider
+	auditlogs                  *auditlogsapi.AuditLogs
 }
 
 type ServiceHandler struct {
@@ -257,6 +263,10 @@ type Options struct {
 	Encryption kms.Encryption
 	// Logger: audit log logger
 	Logger *logging.Client
+	// SDLC: gRPC client to StackDriver Logging.
+	SDLC lgrpcpb.LoggingServiceV2Client
+	// AuditLogProject is the GCP project id where audit logs are written to.
+	AuditLogProject string
 	// SkipInformationReleasePage: set true if want to skip the information release page.
 	SkipInformationReleasePage bool
 	// UseHydra: service use hydra integrated OIDC.
@@ -269,6 +279,9 @@ type Options struct {
 	HydraPublicProxy *hydraproxy.Service
 	// HydraSyncFreq: how often to allow clients:sync to be called
 	HydraSyncFreq time.Duration
+	// ConsentDashboardURL is url to frontend consent dashboard, will replace
+	// ${USER_ID} with userID.
+	ConsentDashboardURL string
 }
 
 // NewService create new IC service.
@@ -280,20 +293,15 @@ func NewService(params *Options) *Service {
 // New creats a new IC and registers it on r.
 func New(r *mux.Router, params *Options) *Service {
 	sh := &ServiceHandler{}
-	lp, err := srcutil.LoadFile(loginPageFile)
+	loginPageTmpl, err := httputils.TemplateFromFiles(loginPageFile, loginPageInfoFile)
 	if err != nil {
-		glog.Exitf("cannot load login page: %v", err)
+		glog.Exitf("cannot create template for login page: %v", err)
 	}
-	lpi, err := srcutil.LoadFile(loginPageInfoFile)
+	clientLoginPageTmpl, err := httputils.TemplateFromFiles(clientLoginPageFile)
 	if err != nil {
-		glog.Exitf("cannot load login page info %q: %v", loginPageInfoFile, err)
+		glog.Exitf("cannot create template for client login page: %v", err)
 	}
-	lp = strings.Replace(lp, "${LOGIN_INFO_HTML}", lpi, -1)
-	clp, err := srcutil.LoadFile(clientLoginPageFile)
-	if err != nil {
-		glog.Exitf("cannot load client login page: %v", err)
-	}
-	infomationReleasePageTmpl, err := httputils.TemplateFromFile("info_release", informationReleasePageFile)
+	infomationReleasePageTmpl, err := httputils.TemplateFromFiles(informationReleasePageFile)
 	if err != nil {
 		glog.Exitf("cannot create template for information release page: %v", err)
 	}
@@ -302,19 +310,19 @@ func New(r *mux.Router, params *Options) *Service {
 		syncFreq = params.HydraSyncFreq
 	}
 
-	perms, err := permissions.LoadPermissions(params.Store)
+	cliAcceptHandler, err := cli.NewAcceptHandler(params.Store, params.Encryption, "/identity")
 	if err != nil {
-		glog.Exitf("cannot load permissions:%v", err)
+		glog.Exitf("cli.NewAcceptHandler() failed: %v", err)
 	}
+
 	s := &Service{
 		store:                      params.Store,
 		Handler:                    sh,
 		httpClient:                 params.HTTPClient,
-		loginPage:                  lp,
-		clientLoginPage:            clp,
+		loginPageTmpl:              loginPageTmpl,
+		clientLoginPageTmpl:        clientLoginPageTmpl,
 		infomationReleasePageTmpl:  infomationReleasePageTmpl,
 		startTime:                  time.Now().Unix(),
-		permissions:                perms,
 		domain:                     params.Domain,
 		serviceName:                params.ServiceName,
 		accountDomain:              params.AccountDomain,
@@ -327,6 +335,9 @@ func New(r *mux.Router, params *Options) *Service {
 		useHydra:                   params.UseHydra,
 		hydraSyncFreq:              syncFreq,
 		scim:                       scim.New(params.Store),
+		cliAcceptHandler:           cliAcceptHandler,
+		consentDashboardURL:        params.ConsentDashboardURL,
+		auditlogs:                  auditlogsapi.NewAuditLogs(params.SDLC, params.AuditLogProject, params.ServiceName),
 	}
 
 	if s.httpClient == nil {
@@ -344,7 +355,7 @@ func New(r *mux.Router, params *Options) *Service {
 		glog.Exitf("cannot use storage layer: %v", err)
 	}
 	if !exists {
-		if err = ImportConfig(params.Store, params.ServiceName, nil); err != nil {
+		if err = ImportConfig(params.Store, params.ServiceName, nil, true, true, true); err != nil {
 			glog.Exitf("cannot import configs to service %q: %v", params.ServiceName, err)
 		}
 	}
@@ -366,6 +377,10 @@ func New(r *mux.Router, params *Options) *Service {
 		if err != nil {
 			glog.Infof("failed to create translator for issuer %q: %v", name, err)
 		}
+	}
+
+	if s.useHydra {
+		s.tokenProviders = append(s.tokenProviders, tokensapi.NewHydraTokenManager(s.hydraAdminURL, s.getIssuerString(), s.clients))
 	}
 
 	s.syncToHydra(cfg.Clients, secrets.ClientSecrets, 30*time.Second, nil)
@@ -425,6 +440,13 @@ func (sh *ServiceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	sh.Handler.ServeHTTP(w, r)
 }
 
+type loginPageArgs struct {
+	ProviderList   string
+	AssetDir       string
+	ServiceTitle   string
+	LoginInfoTitle string
+}
+
 func (s *Service) renderLoginPage(cfg *pb.IcConfig, pathVars map[string]string, queryParams string) (string, error) {
 	list := &pb.LoginPageProviders{
 		Idps:     make(map[string]*pb.LoginPageProviders_ProviderEntry),
@@ -442,11 +464,20 @@ func (s *Service) renderLoginPage(cfg *pb.IcConfig, pathVars map[string]string, 
 	if err != nil {
 		return "", err
 	}
-	page := strings.Replace(s.loginPage, "${PROVIDER_LIST}", json, -1)
-	page = strings.Replace(page, "${ASSET_DIR}", assetPath, -1)
-	page = strings.Replace(page, "${SERVICE_TITLE}", serviceTitle, -1)
-	page = strings.Replace(page, "${LOGIN_INFO_TITLE}", loginInfoTitle, -1)
-	return page, nil
+
+	args := &loginPageArgs{
+		ProviderList:   json,
+		AssetDir:       assetPath,
+		ServiceTitle:   serviceTitle,
+		LoginInfoTitle: loginInfoTitle,
+	}
+
+	sb := &strings.Builder{}
+	if err := s.loginPageTmpl.Execute(sb, args); err != nil {
+		return "", err
+	}
+
+	return sb.String(), nil
 }
 
 func (s *Service) idpAuthorize(in loginIn, idp *cpb.IdentityProvider, cfg *pb.IcConfig, tx storage.Tx) (*oauth2.Config, string, error) {
@@ -1475,7 +1506,7 @@ type damArgs struct {
 }
 
 // ImportConfig ingests bootstrap configuration files to the IC's storage sytem.
-func ImportConfig(store storage.Store, service string, cfgVars map[string]string) (ferr error) {
+func ImportConfig(store storage.Store, service string, cfgVars map[string]string, importConfig, importSecrets, importPermission bool) (ferr error) {
 	tx, err := store.Tx(true)
 	if err != nil {
 		return err
@@ -1501,28 +1532,48 @@ func ImportConfig(store storage.Store, service string, cfgVars map[string]string
 	}
 	fs := storage.NewFileStorage(service, path)
 
-	cfg := &pb.IcConfig{}
-	if err = fs.Read(storage.ConfigDatatype, storage.DefaultRealm, storage.DefaultUser, storage.DefaultID, storage.LatestRev, cfg); err != nil {
-		return err
+	if importConfig {
+		cfg := &pb.IcConfig{}
+		if err = fs.Read(storage.ConfigDatatype, storage.DefaultRealm, storage.DefaultUser, storage.DefaultID, storage.LatestRev, cfg); err != nil {
+			return err
+		}
+		history.Revision = cfg.Revision
+		if err = storage.ReplaceContentVariables(cfg, cfgVars); err != nil {
+			return fmt.Errorf("replacing variables on config file: %v", err)
+		}
+		if err = store.WriteTx(storage.ConfigDatatype, storage.DefaultRealm, storage.DefaultUser, storage.DefaultID, cfg.Revision, cfg, history, tx); err != nil {
+			return err
+		}
 	}
-	history.Revision = cfg.Revision
-	if err = storage.ReplaceContentVariables(cfg, cfgVars); err != nil {
-		return fmt.Errorf("replacing variables on config file: %v", err)
+
+	if importSecrets {
+		secrets := &pb.IcSecrets{}
+		if err = fs.Read(storage.SecretsDatatype, storage.DefaultRealm, storage.DefaultUser, storage.DefaultID, storage.LatestRev, secrets); err != nil {
+			return err
+		}
+		history.Revision = secrets.Revision
+		if err = storage.ReplaceContentVariables(secrets, cfgVars); err != nil {
+			return fmt.Errorf("replacing variables on secrets file: %v", err)
+		}
+		if err = store.WriteTx(storage.SecretsDatatype, storage.DefaultRealm, storage.DefaultUser, storage.DefaultID, secrets.Revision, secrets, history, tx); err != nil {
+			return err
+		}
 	}
-	if err = store.WriteTx(storage.ConfigDatatype, storage.DefaultRealm, storage.DefaultUser, storage.DefaultID, cfg.Revision, cfg, history, tx); err != nil {
-		return err
+
+	if importPermission {
+		perm := &cpb.Permissions{}
+		if err = fs.Read(storage.PermissionsDatatype, storage.DefaultRealm, storage.DefaultUser, storage.DefaultID, storage.LatestRev, perm); err != nil {
+			return err
+		}
+		history.Revision = perm.Revision
+		if err = storage.ReplaceContentVariables(perm, cfgVars); err != nil {
+			return fmt.Errorf("replacing variables on permissions file: %v", err)
+		}
+		if err = store.WriteTx(storage.PermissionsDatatype, storage.DefaultRealm, storage.DefaultUser, storage.DefaultID, perm.Revision, perm, history, tx); err != nil {
+			return err
+		}
 	}
-	secrets := &pb.IcSecrets{}
-	if err = fs.Read(storage.SecretsDatatype, storage.DefaultRealm, storage.DefaultUser, storage.DefaultID, storage.LatestRev, secrets); err != nil {
-		return err
-	}
-	history.Revision = secrets.Revision
-	if err = storage.ReplaceContentVariables(secrets, cfgVars); err != nil {
-		return fmt.Errorf("replacing variables on secrets file: %v", err)
-	}
-	if err = store.WriteTx(storage.SecretsDatatype, storage.DefaultRealm, storage.DefaultUser, storage.DefaultID, secrets.Revision, secrets, history, tx); err != nil {
-		return err
-	}
+
 	return nil
 }
 
@@ -1536,8 +1587,8 @@ func registerHandlers(r *mux.Router, s *Service) {
 	checker := &auth.Checker{
 		Logger:             s.logger,
 		Issuer:             s.getIssuerString(),
+		Permissions:        permissions.New(s.store),
 		FetchClientSecrets: a.fetchClientSecrets,
-		IsAdmin:            a.isAdmin,
 		TransformIdentity:  a.transformIdentity,
 	}
 
@@ -1563,7 +1614,7 @@ func registerHandlers(r *mux.Router, s *Service) {
 	cliAcceptURL := urlPathJoin(s.getDomainURL(), cliAcceptPath)
 	r.HandleFunc(cliRegisterPath, auth.MustWithAuth(handlerfactory.MakeHandler(s.GetStore(), cli.RegisterFactory(s.GetStore(), cliRegisterPath, s.encryption, cliAuthURL, s.hydraPublicURL, hydraAuthURL, hydraTokenURL, cliAcceptURL, http.DefaultClient)), checker, auth.RequireClientIDAndSecret))
 	r.HandleFunc(cliAuthPath, auth.MustWithAuth(cli.NewAuthHandler(s.GetStore()).Handle, checker, auth.RequireNone)).Methods(http.MethodGet)
-	r.HandleFunc(cliAcceptPath, auth.MustWithAuth(cli.NewAcceptHandler(s.store, s.encryption, "/identity").Handle, checker, auth.RequireNone)).Methods(http.MethodGet)
+	r.HandleFunc(cliAcceptPath, auth.MustWithAuth(s.cliAcceptHandler.Handle, checker, auth.RequireNone)).Methods(http.MethodGet)
 
 	// info endpoints
 	r.HandleFunc(infoPath, auth.MustWithAuth(s.Status, checker, auth.RequireNone)).Methods(http.MethodGet)
@@ -1595,19 +1646,27 @@ func registerHandlers(r *mux.Router, s *Service) {
 	r.HandleFunc(scimUsersPath, auth.MustWithAuth(handlerfactory.MakeHandler(s.GetStore(), scim.UsersFactory(s.GetStore(), s.getDomainURL(), scimUsersPath)), checker, auth.RequireAdminToken))
 
 	// token service endpoints
-	tokens := &tokensapi.StubTokens{Token: tokensapi.FakeToken}
-	r.HandleFunc(tokensPath, auth.MustWithAuth(tokensapi.NewTokensHandler(tokens).ListTokens, checker, auth.RequireUserToken)).Methods(http.MethodGet)
-	r.HandleFunc(tokenPath, auth.MustWithAuth(tokensapi.NewTokensHandler(tokens).GetToken, checker, auth.RequireUserToken)).Methods(http.MethodGet)
-	r.HandleFunc(tokenPath, auth.MustWithAuth(tokensapi.NewTokensHandler(tokens).DeleteToken, checker, auth.RequireUserToken)).Methods(http.MethodDelete)
+	r.HandleFunc(tokensPath, auth.MustWithAuth(handlerfactory.MakeHandler(s.store, tokensapi.ListTokensFactory(tokensPath, s.tokenProviders, s.store)), checker, auth.RequireUserToken)).Methods(http.MethodGet)
+	r.HandleFunc(tokenPath, auth.MustWithAuth(handlerfactory.MakeHandler(s.store, tokensapi.DeleteTokenFactory(tokenPath, s.tokenProviders, s.store)), checker, auth.RequireUserToken)).Methods(http.MethodDelete)
+
+	// TODO: to remove.
+	tokens := &faketokensapi.StubTokens{Token: faketokensapi.FakeToken}
+	r.HandleFunc(fakeTokensPath, auth.MustWithAuth(faketokensapi.NewTokensHandler(tokens).ListTokens, checker, auth.RequireUserToken)).Methods(http.MethodGet)
+	r.HandleFunc(fakeTokenPath, auth.MustWithAuth(faketokensapi.NewTokensHandler(tokens).GetToken, checker, auth.RequireUserToken)).Methods(http.MethodGet)
+	r.HandleFunc(fakeTokenPath, auth.MustWithAuth(faketokensapi.NewTokensHandler(tokens).DeleteToken, checker, auth.RequireUserToken)).Methods(http.MethodDelete)
 
 	// consents service endpoints
-	consents := &consentsapi.StubConsents{Consent: consentsapi.FakeConsent}
-	r.HandleFunc(listConsentPath, auth.MustWithAuth(consentsapi.NewMockConsentsHandler(consents).ListConsents, checker, auth.RequireUserToken)).Methods(http.MethodGet)
-	r.HandleFunc(deleteConsentPath, auth.MustWithAuth(consentsapi.NewMockConsentsHandler(consents).DeleteConsent, checker, auth.RequireUserToken)).Methods(http.MethodDelete)
+	consentService := s.consentService()
+	r.HandleFunc(listConsentPath, auth.MustWithAuth(handlerfactory.MakeHandler(s.GetStore(), consentsapi.ListConsentsFactory(consentService, listConsentPath)), checker, auth.RequireUserToken)).Methods(http.MethodGet)
+	r.HandleFunc(deleteConsentPath, auth.MustWithAuth(handlerfactory.MakeHandler(s.GetStore(), consentsapi.DeleteConsentFactory(consentService, deleteConsentPath)), checker, auth.RequireUserToken)).Methods(http.MethodDelete)
 
 	// TODO: delete the mocked endpoints when complete.
+	consents := &consentsapi.StubConsents{Consent: consentsapi.FakeConsent}
 	r.HandleFunc(consentsPath, auth.MustWithAuth(consentsapi.NewMockConsentsHandler(consents).ListConsents, checker, auth.RequireUserToken)).Methods(http.MethodGet)
 	r.HandleFunc(consentPath, auth.MustWithAuth(consentsapi.NewMockConsentsHandler(consents).DeleteConsent, checker, auth.RequireUserToken)).Methods(http.MethodDelete)
+
+	// audit logs endpoints
+	r.HandleFunc(auditlogsPath, auth.MustWithAuth(handlerfactory.MakeHandler(s.store, auditlogsapi.ListAuditlogsPathFactory(auditlogsPath, s.auditlogs)), checker, auth.RequireUserToken)).Methods(http.MethodGet)
 
 	// legacy endpoints
 	r.HandleFunc(adminClaimsPath, auth.MustWithAuth(handlerfactory.MakeHandler(s.GetStore(), s.adminClaimsFactory()), checker, auth.RequireAdminToken))

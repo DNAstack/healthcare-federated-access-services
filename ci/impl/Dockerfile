@@ -6,7 +6,7 @@
 
 # This stage depends on a JDK image and uses Maven Wrapper to pull in dependencies and build the project
 # from source.
-FROM golang:1.12-stretch AS build
+FROM golang:1.14-stretch AS build
 ARG APP_NAME
 ARG APP_VERSION
 
@@ -23,7 +23,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOPATH=$(pwd)/gcp go build -a -o gcp/personas/main 
 ## Stage 2: Package the runnable image
 ##
 
-FROM golang:1.12-alpine
+FROM golang:1.14-alpine
 ARG APP_NAME
 ARG APP_VERSION
 

@@ -18,7 +18,6 @@ package saw
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"path"
@@ -26,29 +25,31 @@ import (
 	"strings"
 	"time"
 
-	iamadmin "cloud.google.com/go/iam/admin/apiv1"                                      /* copybara-comment: admin */
-	iamcreds "cloud.google.com/go/iam/credentials/apiv1"                                /* copybara-comment: credentials */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/clouds"    /* copybara-comment: clouds */
+	"github.com/cenkalti/backoff" /* copybara-comment */
+
+	"golang.org/x/crypto/sha3" /* copybara-comment */
+	"google.golang.org/api/bigquery/v2" /* copybara-comment: bigquery */
+	"google.golang.org/api/cloudresourcemanager/v1" /* copybara-comment: cloudresourcemanager */
+	"google.golang.org/api/iterator" /* copybara-comment: iterator */
+	"google.golang.org/api/option" /* copybara-comment: option */
+	"google.golang.org/grpc/codes" /* copybara-comment */
+	"google.golang.org/grpc" /* copybara-comment */
+	"google.golang.org/grpc/status" /* copybara-comment */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/clouds" /* copybara-comment: clouds */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/httputils" /* copybara-comment: httputils */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/processgc" /* copybara-comment: processgc */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage"   /* copybara-comment: storage */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/timeutil"  /* copybara-comment: timeutil */
-	"github.com/cenkalti/backoff"                                                       /* copybara-comment */
-	glog "github.com/golang/glog"                                                       /* copybara-comment */
-	"golang.org/x/crypto/sha3"                                                          /* copybara-comment */
-	"google.golang.org/api/bigquery/v2"                                                 /* copybara-comment: bigquery */
-	"google.golang.org/api/cloudresourcemanager/v1"                                     /* copybara-comment: cloudresourcemanager */
-	"google.golang.org/api/iterator"                                                    /* copybara-comment: iterator */
-	"google.golang.org/api/option"                                                      /* copybara-comment: option */
-	gcs "google.golang.org/api/storage/v1"                                              /* copybara-comment: storage */
-	"google.golang.org/grpc"                                                            /* copybara-comment */
-	grpcbackoff "google.golang.org/grpc/backoff"                                        /* copybara-comment */
-	"google.golang.org/grpc/codes"                                                      /* copybara-comment */
-	"google.golang.org/grpc/status"                                                     /* copybara-comment */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/retry" /* copybara-comment: retry */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage" /* copybara-comment: storage */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/timeutil" /* copybara-comment: timeutil */
 
+	glog "github.com/golang/glog" /* copybara-comment */
+	iampb "google.golang.org/genproto/googleapis/iam/admin/v1" /* copybara-comment: iam_go_proto */
+	iamcredscpb "google.golang.org/genproto/googleapis/iam/credentials/v1" /* copybara-comment: common_go_proto */
+	iamadmin "cloud.google.com/go/iam/admin/apiv1" /* copybara-comment: admin */
+	iamcreds "cloud.google.com/go/iam/credentials/apiv1" /* copybara-comment: credentials */
+	gcs "google.golang.org/api/storage/v1" /* copybara-comment: storage */
+	grpcbackoff "google.golang.org/grpc/backoff" /* copybara-comment */
 	cpb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/common/v1" /* copybara-comment: go_proto */
-	iampb "google.golang.org/genproto/googleapis/iam/admin/v1"                                /* copybara-comment: iam_go_proto */
-	iamcredscpb "google.golang.org/genproto/googleapis/iam/credentials/v1"                    /* copybara-comment: common_go_proto */
 )
 
 const (
@@ -63,7 +64,10 @@ const (
 	defaultKeysPerAccount = 10
 )
 
-var userManaged = []iampb.ListServiceAccountKeysRequest_KeyType{iampb.ListServiceAccountKeysRequest_USER_MANAGED}
+var (
+	maxAccessTokenTTL = 1 * time.Hour
+	userManaged       = []iampb.ListServiceAccountKeysRequest_KeyType{iampb.ListServiceAccountKeysRequest_USER_MANAGED}
+)
 
 // GCSPolicy is used to manage IAM policy on GCS buckets.
 type GCSPolicy interface {
@@ -267,18 +271,10 @@ func (wh *AccountWarehouse) GetAccountKey(ctx context.Context, id string, ttl, m
 		return nil, fmt.Errorf("creating key: %v", err)
 	}
 
-	if !httputils.IsJSON(params.TokenFormat) {
-		return &clouds.ResourceTokenResult{
-			Account: email,
-			Token:   base64.StdEncoding.EncodeToString(key.PrivateKeyData),
-			Format:  "base64",
-		}, nil
-	}
-
 	return &clouds.ResourceTokenResult{
-		Account: email,
-		Token:   string(key.PrivateKeyData),
-		Format:  params.TokenFormat,
+		Account:    email,
+		AccountKey: string(key.PrivateKeyData),
+		Format:     params.TokenFormat,
 	}, nil
 }
 
@@ -453,27 +449,32 @@ func (wh *AccountWarehouse) configureRoles(ctx context.Context, email string, pa
 	}
 
 	for project, roles := range prMap {
+		state := &backoffState{}
 		f := func() error {
-			return applyCRMChange(ctx, wh.crm, email, project, roles, ttl, &backoffState{})
+			return applyCRMChange(ctx, wh.crm, email, project, roles, ttl, state)
 		}
-		if err := backoff.Retry(f, exponentialBackoff); err != nil {
+		if err := backoff.Retry(f, retry.ExponentialBackoff()); err != nil {
 			return err
 		}
 	}
 
 	for bkt, roles := range bktMap {
+		state := &backoffState{}
 		f := func() error {
-			return applyGCSChange(ctx, wh.gcs, email, bkt, roles, params.BillingProject, ttl, &backoffState{})
+			return applyGCSChange(ctx, wh.gcs, email, bkt, roles, params.BillingProject, ttl, state)
 		}
-		if err := backoff.Retry(f, exponentialBackoff); err != nil {
+		if err := backoff.Retry(f, retry.ExponentialBackoff()); err != nil {
 			return err
 		}
 	}
 
 	for project, drMap := range bqMap {
 		for dataset, roles := range drMap {
-			f := func() error { return applyBQDSChange(ctx, wh.bqds, email, project, dataset, roles, &backoffState{}) }
-			if err := backoff.Retry(f, exponentialBackoff); err != nil {
+			state := &backoffState{}
+			f := func() error {
+				return applyBQDSChange(ctx, wh.bqds, email, project, dataset, roles, state)
+			}
+			if err := backoff.Retry(f, retry.ExponentialBackoff()); err != nil {
 				return err
 			}
 		}
