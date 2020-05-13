@@ -298,13 +298,16 @@ func TestSAW_GetAccountKeyWithRoles_BQ(t *testing.T) {
 		t.Errorf("GetAccountKey() failed: %v", err)
 	}
 
-	gotCrm := fix.crmState.Bindings
-	wantCrm := []*cloudresourcemanager.Binding{{
-		Members: []string{
-			"serviceAccount:ie652a310ecf7b4ec1771e62d53609@fake-account-project.iam.gserviceaccount.com",
-		},
-		Role: "roles/bigquery.user",
-	}}
+	gotCrm := fix.crmState
+	wantCrm := &crmState{
+		Bindings: []*cloudresourcemanager.Binding{{
+			Members: []string{
+				"serviceAccount:ie652a310ecf7b4ec1771e62d53609@fake-account-project.iam.gserviceaccount.com",
+			},
+			Role: "roles/bigquery.user",
+		}},
+		Project: "fake-job-project",
+	}
 	if diff := cmp.Diff(wantCrm, gotCrm); diff != "" {
 		t.Errorf("saw.GetAccountKeyWithRoles() returned diff (-wantCrm +gotCrm):\n%s", diff)
 	}
@@ -490,6 +493,7 @@ type fakeCRM struct {
 
 type crmState struct {
 	Bindings []*cloudresourcemanager.Binding
+	Project  string
 }
 
 func (f *fakeCRM) Get(ctx context.Context, project string) (*cloudresourcemanager.Policy, error) {
@@ -505,6 +509,7 @@ func (f *fakeCRM) Get(ctx context.Context, project string) (*cloudresourcemanage
 }
 
 func (f *fakeCRM) Set(ctx context.Context, project string, policy *cloudresourcemanager.Policy) error {
+	f.crmState.Project = project
 	for _, binding := range policy.Bindings {
 		b := &cloudresourcemanager.Binding{}
 		b.Role = binding.Role
