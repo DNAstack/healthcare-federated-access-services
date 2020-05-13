@@ -16,9 +16,8 @@
 package permissions
 
 import (
-	"fmt"
-	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh" /* copybara-comment: ga4gh */
@@ -28,46 +27,46 @@ import (
 	cpb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/common/v1" /* copybara-comment: go_proto */
 )
 
+const cacheTimeout = time.Minute * 5
+
 // Permissions type exposes functions access user permissions.
 type Permissions struct {
-	perm *cpb.Permissions
+	store             storage.Store
+	cachedPermissions *cpb.Permissions
+	cacheExpiry       time.Time
+	mutex             sync.Mutex
 }
 
-// LoadPermissions loads permission from storage/config.
-func LoadPermissions(store storage.Store) (*Permissions, error) {
-	info := store.Info()
-	service := info["service"]
-	path := info["path"]
-	if service == "" || path == "" {
-		return nil, fmt.Errorf("cannot obtain service and path from storage layer")
+// New creates Permissions.
+func New(store storage.Store) *Permissions {
+	return &Permissions{store: store}
+}
+
+// loadPermissions loads permission from storage/config.
+func (p *Permissions) loadPermissions() (*cpb.Permissions, error) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	now := time.Now()
+	// return if valid cached value available
+	if p.cachedPermissions != nil && p.cacheExpiry.After(now) {
+		return p.cachedPermissions, nil
 	}
 
-	// TODO Save these in real storage.
-	fs := storage.NewFileStorage(service, path)
-	perms := &cpb.Permissions{}
-
-	if err := fs.Read(storage.PermissionsDatatype, storage.DefaultRealm, storage.DefaultUser, storage.DefaultID, storage.LatestRev, perms); err != nil {
+	p.cacheExpiry = now.Add(cacheTimeout)
+	p.cachedPermissions = &cpb.Permissions{}
+	if err := p.store.Read(storage.PermissionsDatatype, storage.DefaultRealm, storage.DefaultUser, storage.DefaultID, storage.LatestRev, p.cachedPermissions); err != nil {
 		return nil, err
 	}
-	return &Permissions{perm: perms}, nil
+	return p.cachedPermissions, nil
 }
 
-// CheckAdmin returns http status forbidden and error message if user does not have validate admin permission.
-// TODO: only return error is enough.
-func (p *Permissions) CheckAdmin(id *ga4gh.Identity) (int, error) {
-	if !p.IsAdmin(id) {
-		return http.StatusForbidden, fmt.Errorf("user is not an administrator")
+// CheckAdmin returns if user has valid admin permission.
+func (p *Permissions) CheckAdmin(id *ga4gh.Identity) (bool, error) {
+	perm, err := p.loadPermissions()
+	if err != nil {
+		return false, err
 	}
-	return http.StatusOK, nil
-}
-
-// CheckSubjectOrAdmin returns http status forbidden and an error message if the client isn't the
-// subject being requested and also isn't an admin.
-func (p *Permissions) CheckSubjectOrAdmin(id *ga4gh.Identity, sub string) (int, error) {
-	if id.Subject != sub {
-		return p.CheckAdmin(id)
-	}
-	return http.StatusOK, nil
+	return isAdmin(perm, id), nil
 }
 
 func extractIdentitiesFromVisas(id *ga4gh.Identity) []string {
@@ -102,25 +101,25 @@ func extractIdentitiesFromVisas(id *ga4gh.Identity) []string {
 	return subjects
 }
 
-// IsAdmin returns true if the identity's underlying account has
+// isAdmin returns true if the identity's underlying account has
 // administrative privileges without checking scopes or other
 // restrictions related to the auth token itself.
-func (p *Permissions) IsAdmin(id *ga4gh.Identity) bool {
+func isAdmin(perm *cpb.Permissions, id *ga4gh.Identity) bool {
 	if id == nil {
 		return false
 	}
 	now := time.Now()
-	if p.isAdminUser(id.Subject, now) {
+	if isAdminUser(perm, id.Subject, now) {
 		return true
 	}
 	for user := range id.Identities {
-		if p.isAdminUser(user, now) {
+		if isAdminUser(perm, user, now) {
 			return true
 		}
 	}
 
 	for _, sub := range extractIdentitiesFromVisas(id) {
-		if p.isAdminUser(sub, now) {
+		if isAdminUser(perm, sub, now) {
 			return true
 		}
 	}
@@ -128,14 +127,14 @@ func (p *Permissions) IsAdmin(id *ga4gh.Identity) bool {
 	return false
 }
 
-func (p *Permissions) isAdminUser(user string, now time.Time) bool {
+func isAdminUser(perm *cpb.Permissions, user string, now time.Time) bool {
 	// Only allowing "sub" that contain an "@" symbol. We don't want
 	// to allow admins to try to trigger on a raw account number
 	// without knowing where it came from.
 	if !strings.Contains(user, "@") {
 		return false
 	}
-	u, ok := p.perm.Users[user]
+	u, ok := perm.Users[user]
 	if !ok {
 		return false
 	}

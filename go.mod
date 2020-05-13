@@ -9,7 +9,7 @@ require (
   cloud.google.com/go/datastore v1.0.0
   cloud.google.com/go/logging v1.0.0
   github.com/aws/aws-sdk-go v1.29.15
-  github.com/cenkalti/backoff v2.1.1+incompatible
+  github.com/cenkalti/backoff v2.2.0+incompatible
   github.com/coreos/go-oidc v2.0.0+incompatible
   github.com/dgrijalva/jwt-go v3.2.0+incompatible
   github.com/go-openapi/strfmt v0.19.3

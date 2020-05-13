@@ -29,6 +29,7 @@ import (
 	"cloud.google.com/go/logging" /* copybara-comment: logging */
 	"github.com/gorilla/mux" /* copybara-comment */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/dsstore" /* copybara-comment: dsstore */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/grpcutil" /* copybara-comment: grpcutil */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/httputils" /* copybara-comment: httputils */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/hydraproxy" /* copybara-comment: hydraproxy */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ic" /* copybara-comment: ic */
@@ -39,6 +40,7 @@ import (
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage" /* copybara-comment: storage */
 
 	glog "github.com/golang/glog" /* copybara-comment */
+	lgrpcpb "google.golang.org/genproto/googleapis/logging/v2" /* copybara-comment: logging_go_grpc */
 )
 
 var (
@@ -63,6 +65,11 @@ var (
 	// Use env var "SKIP_INFORMATION_RELEASE_PAGE" = true to set.
 	skipInformationReleasePage = os.Getenv("SKIP_INFORMATION_RELEASE_PAGE") == "true"
 
+	// consentDashboardURL is url to frontend consent dashboard, will replace
+	// ${USER_ID} with userID. If it is not set point to howto doc on github
+	// repo.
+	consentDashboardURL = osenv.VarWithDefault("CONSENT_DASHBOARD_URL", "https://github.com/GoogleCloudPlatform/healthcare-federated-access-services/blob/0f366e73284377571bc314da7666e4b14233c3fa/howto.md#how-do-i-revoke-a-remembered-consent")
+
 	useHydra = os.Getenv("USE_HYDRA") != ""
 	// hydraAdminAddr is the address for the Hydra admin endpoint.
 	hydraAdminAddr = ""
@@ -73,6 +80,9 @@ var (
 		"${YOUR_PROJECT_ID}":  project,
 		"${YOUR_ENVIRONMENT}": envPrefix(srvName),
 	}
+
+	// sldAddr is the address for Stackdriver Logging API.
+	sdlAddr = osenv.VarWithDefault("SDL_ADDR", "logging.googleapis.com:443")
 )
 
 func main() {
@@ -83,6 +93,10 @@ func main() {
 	serviceinfo.Type = "ic"
 	serviceinfo.Name = srvName
 
+	sdlcc := grpcutil.NewGRPCClient(ctx, sdlAddr)
+	defer sdlcc.Close()
+	sdlc := lgrpcpb.NewLoggingServiceV2Client(sdlcc)
+
 	var store storage.Store
 	switch storageType {
 	case "datastore":
@@ -90,7 +104,7 @@ func main() {
 	case "memory":
 		store = storage.NewMemoryStorage(srvName, cfgPath)
 		// Import and resolve template variables, if any.
-		if err := ic.ImportConfig(store, srvName, cfgVars); err != nil {
+		if err := ic.ImportConfig(store, srvName, cfgVars, true, true, true); err != nil {
 			glog.Exitf("ic.ImportConfig(_, %q, _) failed: %v", srvName, err)
 		}
 	default:
@@ -135,11 +149,14 @@ func main() {
 		Store:                      store,
 		Encryption:                 gcpkms,
 		Logger:                     logger,
+		SDLC:                       sdlc,
+		AuditLogProject:            project,
 		SkipInformationReleasePage: skipInformationReleasePage,
 		UseHydra:                   useHydra,
 		HydraAdminURL:              hydraAdminAddr,
 		HydraPublicURL:             hydraPublicAddr,
 		HydraPublicProxy:           hyproxy,
+		ConsentDashboardURL:        consentDashboardURL,
 	})
 
 	r.HandleFunc("/liveness_check", httputils.LivenessCheckHandler)

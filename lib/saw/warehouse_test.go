@@ -16,7 +16,6 @@ package saw
 
 import (
 	"context"
-	"encoding/base64"
 	"testing"
 	"time"
 
@@ -68,9 +67,9 @@ func TestSAW_GetAccountKey(t *testing.T) {
 	}
 
 	want := &clouds.ResourceTokenResult{
-		Format:  "base64",
-		Account: "ie652a310ecf7b4ec1771e62d53609@fake-account-project.iam.gserviceaccount.com",
-		Token:   base64.StdEncoding.EncodeToString([]byte("projects/fake-account-project/serviceAccounts/ie652a310ecf7b4ec1771e62d53609@fake-account-project.iam.gserviceaccount.com/keys/fake-key-id-0/fake-private-key")),
+		Format:     "",
+		Account:    "ie652a310ecf7b4ec1771e62d53609@fake-account-project.iam.gserviceaccount.com",
+		AccountKey: "projects/fake-account-project/serviceAccounts/ie652a310ecf7b4ec1771e62d53609@fake-account-project.iam.gserviceaccount.com/keys/fake-key-id-0/fake-private-key",
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("saw.GetAccountKey() returned diff (-want +got):\n%s", diff)
@@ -452,17 +451,23 @@ func newFix(t *testing.T) (*Fix, func() error) {
 }
 
 type fakeGCS struct {
+	getResponse    *gcs.Policy
+	getResponseErr error
+	setResponseErr error
 }
 
 func (f *fakeGCS) Get(ctx context.Context, bkt string, billingProject string) (*gcs.Policy, error) {
-	return nil, nil
+	return f.getResponse, f.getResponseErr
 }
 
 func (f *fakeGCS) Set(ctx context.Context, bkt string, billingProject string, policy *gcs.Policy) error {
-	return nil
+	return f.setResponseErr
 }
 
 type fakeBQ struct {
+	getResponse    *bigquery.Dataset
+	getResponseErr error
+	setResponseErr error
 	bqState *bqState
 }
 
@@ -474,7 +479,7 @@ func (f *fakeBQ) Get(ctx context.Context, project string, dataset string) (*bigq
 	bq := &bigquery.Dataset{
 		Access: []*bigquery.DatasetAccess{},
 	}
-	return bq, nil
+	return bq, f.getResponseErr
 }
 
 func (f *fakeBQ) Set(ctx context.Context, project string, dataset string, ds *bigquery.Dataset) error {
@@ -484,10 +489,13 @@ func (f *fakeBQ) Set(ctx context.Context, project string, dataset string, ds *bi
 		a.UserByEmail = bqd.UserByEmail
 		f.bqState.Access = append(f.bqState.Access, a)
 	}
-	return nil
+	return f.setResponseErr
 }
 
 type fakeCRM struct {
+	getResponse    *cloudresourcemanager.Policy
+	getResponseErr error
+	setResponseErr error
 	crmState *crmState
 }
 
@@ -505,7 +513,7 @@ func (f *fakeCRM) Get(ctx context.Context, project string) (*cloudresourcemanage
 			},
 		},
 	}
-	return policy, nil
+	return policy, f.getResponseErr
 }
 
 func (f *fakeCRM) Set(ctx context.Context, project string, policy *cloudresourcemanager.Policy) error {
@@ -516,5 +524,5 @@ func (f *fakeCRM) Set(ctx context.Context, project string, policy *cloudresource
 		b.Members = binding.Members
 		f.crmState.Bindings = append(f.crmState.Bindings, b)
 	}
-	return nil
+	return f.setResponseErr
 }

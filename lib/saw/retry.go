@@ -15,54 +15,9 @@
 package saw
 
 import (
-	"time"
-
 	"github.com/cenkalti/backoff" /* copybara-comment */
 	"google.golang.org/api/googleapi" /* copybara-comment: googleapi */
 )
-
-const (
-	backoffInitialInterval     = 1 * time.Second
-	backoffRandomizationFactor = 0.5
-	backoffMultiplier          = 1.5
-	backoffMaxInterval         = 3 * time.Second
-	backoffMaxElapsedTime      = 10 * time.Second
-)
-
-var (
-	maxAccessTokenTTL  = 1 * time.Hour
-	exponentialBackoff = &backoff.ExponentialBackOff{
-		InitialInterval:     backoffInitialInterval,
-		RandomizationFactor: backoffRandomizationFactor,
-		Multiplier:          backoffMultiplier,
-		MaxInterval:         backoffMaxInterval,
-		MaxElapsedTime:      backoffMaxElapsedTime,
-		Clock:               backoff.SystemClock,
-	}
-
-	retry = func(f backoff.Operation) error {
-		g := func() error { return retryErr(f()) }
-		return backoff.Retry(g, exponentialBackoff)
-	}
-)
-
-func retryErr(err error) error {
-	if gerr, ok := err.(*googleapi.Error); ok {
-		// This logic follows the guidance at
-		// https://cloud.google.com/apis/design/errors#error_retries
-		if gerr.Code == 500 || gerr.Code == 503 {
-			return err
-		}
-	}
-	return backoff.Permanent(err)
-}
-
-func expBackoffRetry(o backoff.Operation) error {
-	return backoff.Retry(func() error {
-		err := o()
-		return convertToPermanentErrorIfApplicable(err, err)
-	}, exponentialBackoff)
-}
 
 func convertToPermanentErrorIfApplicable(err error, formattedErr error) error {
 	if googleErr, ok := err.(*googleapi.Error); ok {

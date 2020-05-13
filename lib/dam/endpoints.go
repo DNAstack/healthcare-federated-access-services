@@ -87,15 +87,17 @@ const (
 	testPath = "/dam/v1alpha/{realm}/tests"
 
 	// End-point for managing tokens. See "proto/tokens/v1/consents.proto"
-	tokensPath = "/tokens"
-	tokenPath  = "/tokens/"
+	tokensPath     = "/dam/v1alpha/users/{user}/tokens"
+	tokenPath      = "/dam/v1alpha/users/{user}/tokens/{token_id}"
+	fakeTokensPath = "/tokens"
+	fakeTokenPath  = "/tokens/"
 
 	// End-point for managing consents. See "proto/tokens/v1/tokens.proto"
 	consentsPath = "/consents"
 	consentPath  = "/consents/"
 
-	// End-point for managing audit logs. See "proto/auditlogs/v0/auditlogs.proto"
-	auditlogsPath = "/users/{user}/auditlogs"
+	// End-point for viewing audit logs. See "proto/auditlogs/v0/auditlogs.proto"
+	auditlogsPath = "/dam/v1alpha/users/{user}/auditlogs"
 
 	// ---------------------------------------------------------------------------
 	// The following are read-only non-admin access to configurations of DAM.
@@ -125,4 +127,11 @@ const (
 	// infoPath: metadata about the service, like versions of various services.
 	// Required permission: none
 	infoPath = "/dam"
+
+	// OIDC gatekeeper config endpoints
+
+	gatekeeperIssuer    = "/dam/gatekeeper"
+	oidcWellKnownPrefix = gatekeeperIssuer + "/.well-known"
+	oidcConfiguarePath  = oidcWellKnownPrefix + "/openid-configuration"
+	oidcJwksPath        = oidcWellKnownPrefix + "/jwks"
 )

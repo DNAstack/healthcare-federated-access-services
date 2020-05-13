@@ -12,15 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package kms offers an interface for providing encryption services.
-package kms
+package httputils
 
 import (
-	"context"
+	"net/url"
+	"strings"
 )
 
-// Encryption abstracts a encryption service for storing encrypted data.
-type Encryption interface {
-	Encrypt(ctx context.Context, data []byte, additionalAuthData string) ([]byte, error)
-	Decrypt(ctx context.Context, encrypted []byte, additionalAuthData string) ([]byte, error)
+// IsHTTPS checks if the url is using https
+func IsHTTPS(in string) bool {
+	u, err := url.Parse(in)
+	if err != nil {
+		return false
+	}
+	return u.Scheme == "https" && strings.Contains(u.Hostname(), ".")
+}
+
+// IsLocalhost checks if the url is hosting in local
+func IsLocalhost(in string) bool {
+	url, err := url.Parse(in)
+	if err != nil {
+		return false
+	}
+	return url.Hostname() == "localhost"
 }

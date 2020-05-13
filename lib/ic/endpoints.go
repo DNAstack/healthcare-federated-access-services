@@ -47,7 +47,7 @@ const (
 	cliAcceptPath = "/identity/cli/accept"
 
 	// ---------------------------------------------------------------------------
-	// The following are administration endpoints for managing DAM.
+	// The following are administration endpoints for managing IC.
 	// ---------------------------------------------------------------------------
 
 	// The following are for managing realms.
@@ -83,15 +83,20 @@ const (
 	scimMePath    = "/identity/scim/v2/{realm}/Me"
 
 	// End-point for managing tokens. See "proto/tokens/v1/consents.proto"
-	tokensPath = "/tokens"
-	tokenPath  = "/tokens/"
+	tokensPath     = "/identity/v1alpha/users/{user}/tokens"
+	tokenPath      = "/identity/v1alpha/users/{user}/tokens/{token_id}"
+	fakeTokensPath = "/tokens"
+	fakeTokenPath  = "/tokens/"
 
 	// End-point for managing consents. See "proto/tokens/v1/tokens.proto"
-	listConsentPath   = "/identity/v1alpha/users/{user}/consents"
-	deleteConsentPath = "/identity/v1alpha/users/{user}/consents/{consent_id}"
+	listConsentPath   = "/identity/v1alpha/{realm}/users/{user}/consents"
+	deleteConsentPath = "/identity/v1alpha/{realm}/users/{user}/consents/{consent_id}"
 	// TODO: delete the mocked endpoints when complete.
 	consentsPath = "/consents"
 	consentPath  = "/consents/"
+
+	// End-point for viewing audit logs. See "proto/auditlogs/v0/auditlogs.proto"
+	auditlogsPath = "/identity/v1alpha/users/{user}/auditlogs"
 
 	// ---------------------------------------------------------------------------
 	// The following are read-only non-admin access to configurations of IC.
