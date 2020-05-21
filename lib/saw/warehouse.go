@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff" /* copybara-comment */
-
 	"golang.org/x/crypto/sha3" /* copybara-comment */
 	"google.golang.org/api/bigquery/v2" /* copybara-comment: bigquery */
 	"google.golang.org/api/cloudresourcemanager/v1" /* copybara-comment: cloudresourcemanager */
