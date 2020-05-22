@@ -468,27 +468,13 @@ type fakeBQ struct {
 	getResponse    *bigquery.Dataset
 	getResponseErr error
 	setResponseErr error
-	bqState *bqState
-}
-
-type bqState struct {
-	Access []*bigquery.DatasetAccess
 }
 
 func (f *fakeBQ) Get(ctx context.Context, project string, dataset string) (*bigquery.Dataset, error) {
-	bq := &bigquery.Dataset{
-		Access: []*bigquery.DatasetAccess{},
-	}
-	return bq, f.getResponseErr
+	return f.getResponse, f.getResponseErr
 }
 
 func (f *fakeBQ) Set(ctx context.Context, project string, dataset string, ds *bigquery.Dataset) error {
-	for _, bqd := range ds.Access {
-		a := &bigquery.DatasetAccess{}
-		a.Role = bqd.Role
-		a.UserByEmail = bqd.UserByEmail
-		f.bqState.Access = append(f.bqState.Access, a)
-	}
 	return f.setResponseErr
 }
 
@@ -496,33 +482,12 @@ type fakeCRM struct {
 	getResponse    *cloudresourcemanager.Policy
 	getResponseErr error
 	setResponseErr error
-	crmState *crmState
-}
-
-type crmState struct {
-	Bindings []*cloudresourcemanager.Binding
-	Project  string
 }
 
 func (f *fakeCRM) Get(ctx context.Context, project string) (*cloudresourcemanager.Policy, error) {
-	policy := &cloudresourcemanager.Policy{
-		Bindings: []*cloudresourcemanager.Binding{
-			{
-				Role:    "roles/bigquery.user",
-				Members: []string{"serviceAccount:ie652a310ecf7b4ec1771e62d53609@fake-account-project.iam.gserviceaccount.com"},
-			},
-		},
-	}
-	return policy, f.getResponseErr
+	return f.getResponse, f.getResponseErr
 }
 
 func (f *fakeCRM) Set(ctx context.Context, project string, policy *cloudresourcemanager.Policy) error {
-	f.crmState.Project = project
-	for _, binding := range policy.Bindings {
-		b := &cloudresourcemanager.Binding{}
-		b.Role = binding.Role
-		b.Members = binding.Members
-		f.crmState.Bindings = append(f.crmState.Bindings, b)
-	}
 	return f.setResponseErr
 }
