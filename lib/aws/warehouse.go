@@ -19,9 +19,8 @@ package aws
 import (
 	"context"
 	"fmt"
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/timeutil"
-	glog "github.com/golang/glog"
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/processaws"
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/timeutil"
 	v1 "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/dam/v1"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
@@ -29,13 +28,14 @@ import (
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/aws/aws-sdk-go/service/sts"
 	"github.com/cenkalti/backoff"
+	glog "github.com/golang/glog"
 	"sort"
 	"strings"
 	"time"
 
+	"crypto/sha1"
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/clouds"
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage"
-	"crypto/sha1"
 	"hash"
 )
 
@@ -673,7 +673,7 @@ func ensureRole(sess *session.Session, spec *principalSpec) (string, error) {
 			cro, err := svc.CreateRole(&iam.CreateRoleInput{
 				AssumeRolePolicyDocument: aws.String(policy),
 				RoleName:                 aws.String(spec.getId()),
-				MaxSessionDuration: toSeconds(TemporaryCredMaxTtl),
+				MaxSessionDuration:       toSeconds(TemporaryCredMaxTtl),
 				Tags: []*iam.Tag{
 					{
 						Key:   aws.String("DamResource"),
