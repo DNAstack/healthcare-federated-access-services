@@ -24,11 +24,10 @@ import (
 	v1 "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/dam/v1"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/aws/aws-sdk-go/service/sts"
 	"github.com/cenkalti/backoff"
-	glog "github.com/golang/glog"
+	"github.com/golang/glog"
 	"sort"
 	"strings"
 	"time"
@@ -85,12 +84,28 @@ var (
 	}
 )
 
+type ApiClient interface {
+	ListUsers(input *iam.ListUsersInput) (*iam.ListUsersOutput, error)
+	ListAccessKeys(input *iam.ListAccessKeysInput) (*iam.ListAccessKeysOutput, error)
+	DeleteAccessKey(input *iam.DeleteAccessKeyInput) (*iam.DeleteAccessKeyOutput, error)
+	GetCallerIdentity(input *sts.GetCallerIdentityInput) (*sts.GetCallerIdentityOutput, error)
+	AssumeRole(input *sts.AssumeRoleInput) (*sts.AssumeRoleOutput, error)
+	CreateAccessKey(input *iam.CreateAccessKeyInput) (*iam.CreateAccessKeyOutput, error)
+	PutRolePolicy(input *iam.PutRolePolicyInput) (*iam.PutRolePolicyOutput, error)
+	PutUserPolicy(input *iam.PutUserPolicyInput) (*iam.PutUserPolicyOutput, error)
+	GetUser(input *iam.GetUserInput) (*iam.GetUserOutput, error)
+	CreateUser(input *iam.CreateUserInput) (*iam.CreateUserOutput, error)
+	GetRole(input *iam.GetRoleInput) (*iam.GetRoleOutput, error)
+	CreateRole(input *iam.CreateRoleInput) (*iam.CreateRoleOutput, error)
+}
+
 // AccountWarehouse is used to create AWS IAM Users and temporary credentials
 type AccountWarehouse struct {
 	svcUserArn *string
 	store      storage.Store
 	tmp        map[string]iam.AccessKey
 	keyGC      *processaws.KeyGC
+	apiClient  ApiClient
 }
 
 func (wh *AccountWarehouse) GetServiceAccounts(ctx context.Context, project string) (<-chan *clouds.Account, error) {
@@ -109,15 +124,14 @@ func (wh *AccountWarehouse) GetServiceAccounts(ctx context.Context, project stri
 			}
 			return nil
 		}
-		sess, err := createSession()
-		if err != nil {
-			return
-		}
-		svc := iam.New(sess)
 		// FIXME: get PathPrefix from config
-		accounts, err := svc.ListUsers(&iam.ListUsersInput{
+		accounts, err := wh.apiClient.ListUsers(&iam.ListUsersInput{
 			PathPrefix: aws.String("/ddap/"),
 		})
+		if err != nil {
+			glog.Errorf("getting users list: %v", err)
+			return
+		}
 		users := accounts.Users
 		for _, user := range users {
 			if err := f(user); err != nil {
@@ -144,12 +158,7 @@ func (wh *AccountWarehouse) RemoveServiceAccount(ctx context.Context, project, a
 //This method is the main method where key removal happens
 func (wh *AccountWarehouse) ManageAccountKeys(ctx context.Context, project, accountID string, ttl, maxKeyTTL time.Duration, now time.Time, keysPerAccount int64) (int, int, error) {
 	expired := now.Add(-1 * maxKeyTTL).Format(time.RFC3339)
-	sess, err := createSession()
-	if err != nil {
-		return 0, 0, fmt.Errorf("error creating AWS session: %v", err)
-	}
-	svc := iam.New(sess)
-	accessKeys, err := svc.ListAccessKeys(&iam.ListAccessKeysInput{
+	accessKeys, err := wh.apiClient.ListAccessKeys(&iam.ListAccessKeysInput{
 		UserName: aws.String(accountID),
 	})
 	if err != nil {
@@ -162,7 +171,7 @@ func (wh *AccountWarehouse) ManageAccountKeys(ctx context.Context, project, acco
 		t := timeutil.TimestampProto(aws.TimeValue(key.CreateDate))
 		if timeutil.RFC3339(t) < expired {
 			// Access key deletion
-			_, err := svc.DeleteAccessKey(&iam.DeleteAccessKeyInput{
+			_, err := wh.apiClient.DeleteAccessKey(&iam.DeleteAccessKeyInput{
 				AccessKeyId: key.AccessKeyId,
 				UserName:    aws.String(accountID),
 			})
@@ -184,7 +193,7 @@ func (wh *AccountWarehouse) ManageAccountKeys(ctx context.Context, project, acco
 		return aws.TimeValue(actives[i].CreateDate).After(aws.TimeValue(actives[j].CreateDate))
 	})
 	for _, key := range actives[keysPerAccount:] {
-		_, err := svc.DeleteAccessKey(&iam.DeleteAccessKeyInput{
+		_, err := wh.apiClient.DeleteAccessKey(&iam.DeleteAccessKeyInput{
 			AccessKeyId: key.AccessKeyId,
 			UserName:    aws.String(accountID),
 		})
@@ -276,29 +285,28 @@ type policySpec struct {
 	params    *ResourceParams
 }
 
-// NewAccountWarehouse creates a new AccountWarehouse using the provided client
+// NewWarehouse creates a new AccountWarehouse using the provided client
 // and options.
-func NewWarehouse(ctx context.Context, store storage.Store) (*AccountWarehouse, error) {
+func NewWarehouse(ctx context.Context, store storage.Store, awsClient ApiClient) (*AccountWarehouse, error) {
 	wh := &AccountWarehouse{
-		store: store,
-		tmp: make(map[string]iam.AccessKey),
-		keyGC: nil,
+		store:     store,
+		tmp:       make(map[string]iam.AccessKey),
+		keyGC:     nil,
+		apiClient: awsClient,
 	}
 	wh.keyGC = processaws.NewKeyGC("aws_key_gc", wh, store, defaultGcFrequency, defaultKeysPerAccount)
 	go wh.Run(ctx)
 	return wh, nil
 }
 
-func RegisterAccountGC(store storage.Store, wh *AccountWarehouse) (error) {
+func RegisterAccountGC(store storage.Store, wh *AccountWarehouse) error {
+	// IMPORTANT this transaction is closed in `process.go`
+	// FIXME, maybe move this transaction creation closer to where it is used/closed?
 	tx, err := store.Tx(true)
 	if err != nil {
 		return err
 	}
-	sess, err := createSession()
-	if err != nil {
-		return err
-	}
-	svcUserArn, err := wh.loadSvcUserArn(sess)
+	svcUserArn, err := wh.loadSvcUserArn()
 	if err != nil {
 		return err
 	}
@@ -307,17 +315,12 @@ func RegisterAccountGC(store storage.Store, wh *AccountWarehouse) (error) {
 
 // MintTokenWithTTL returns an AccountKey or an AccessToken depending on the TTL requested.
 func (wh *AccountWarehouse) MintTokenWithTTL(ctx context.Context, params *ResourceParams) (*clouds.AwsResourceTokenResult, error) {
-	sess, err := createSession()
-	if err != nil {
-		return nil, err
-	}
-
 	if params.Ttl > params.MaxKeyTtl {
 		return nil, fmt.Errorf("given ttl [%s] is greater than max ttl [%s]", params.Ttl, params.MaxKeyTtl)
 	}
 
 	// FIXME load in constructor function?
-	svcUserArn, err := wh.loadSvcUserArn(sess)
+	svcUserArn, err := wh.loadSvcUserArn()
 	if err != nil {
 		return nil, err
 	}
@@ -390,33 +393,32 @@ func (wh *AccountWarehouse) MintTokenWithTTL(ctx context.Context, params *Resour
 		return nil, fmt.Errorf("unrecognized item format [%s] for AWS target adapter", params.ServiceTemplate.ServiceName)
 	}
 
-	principalArn, err := ensurePrincipal(sess, princSpec)
+	principalArn, err := wh.ensurePrincipal(princSpec)
 	if err != nil {
 		return nil, err
 	}
-	err = ensurePolicy(sess, polSpec)
+	err = wh.ensurePolicy(polSpec)
 	if err != nil {
 		return nil, err
 	}
 
-	return wh.ensureTokenResult(ctx, sess, principalArn, princSpec, svcUserArn)
+	return wh.ensureTokenResult(ctx, principalArn, princSpec, svcUserArn)
 }
 
-func (wh *AccountWarehouse) ensureTokenResult(ctx context.Context, sess *session.Session, principalArn string, princSpec *principalSpec, svcUserArn string) (*clouds.AwsResourceTokenResult, error) {
+func (wh *AccountWarehouse) ensureTokenResult(ctx context.Context, principalArn string, princSpec *principalSpec, svcUserArn string) (*clouds.AwsResourceTokenResult, error) {
 	switch princSpec.pType {
 	case userType:
-		return wh.ensureAccessKeyResult(ctx, sess, principalArn, princSpec, svcUserArn)
+		return wh.ensureAccessKeyResult(ctx, principalArn, princSpec, svcUserArn)
 	case roleType:
-		return createTempCredentialResult(sess, principalArn, princSpec.params)
+		return wh.createTempCredentialResult(principalArn, princSpec.params)
 	default:
 		return nil, fmt.Errorf("cannot generate token for invalid spec with [%v] principal type", princSpec.pType)
 	}
 }
 
-func createTempCredentialResult(sess *session.Session, principalArn string, params *ResourceParams) (*clouds.AwsResourceTokenResult, error) {
-	svc := sts.New(sess)
+func(wh *AccountWarehouse) createTempCredentialResult(principalArn string, params *ResourceParams) (*clouds.AwsResourceTokenResult, error) {
 	userId := convertUserIdToSessionName(params.UserId)
-	aro, err := assumeRole(userId, svc, principalArn, params.Ttl)
+	aro, err := wh.assumeRole(userId, principalArn, params.Ttl)
 	if err != nil {
 		return nil, err
 	}
@@ -429,8 +431,8 @@ func createTempCredentialResult(sess *session.Session, principalArn string, para
 	}, nil
 }
 
-func (wh *AccountWarehouse) ensureAccessKeyResult(ctx context.Context, sess *session.Session, principalArn string, princSpec *principalSpec, svcUserArn string) (*clouds.AwsResourceTokenResult, error) {
-	accessKey, err := wh.ensureAccessKey(ctx, sess, principalArn, princSpec, svcUserArn)
+func (wh *AccountWarehouse) ensureAccessKeyResult(ctx context.Context, principalArn string, princSpec *principalSpec, svcUserArn string) (*clouds.AwsResourceTokenResult, error) {
+	accessKey, err := wh.ensureAccessKey(ctx, princSpec, svcUserArn)
 	if err != nil {
 		return nil, err
 	}
@@ -442,28 +444,28 @@ func (wh *AccountWarehouse) ensureAccessKeyResult(ctx context.Context, sess *ses
 	}, nil
 }
 
-func ensurePrincipal(sess *session.Session, princSpec *principalSpec) (string, error) {
+func(wh *AccountWarehouse) ensurePrincipal(princSpec *principalSpec) (string, error) {
 	if princSpec.params.Ttl > TemporaryCredMaxTtl {
-		return ensureUser(sess, princSpec)
+		return wh.ensureUser(princSpec)
 	} else {
-		return ensureRole(sess, princSpec)
+		return wh.ensureRole(princSpec)
 	}
 }
 
-func ensurePolicy(sess *session.Session, spec *policySpec) error {
+func(wh *AccountWarehouse) ensurePolicy(spec *policySpec) error {
 	if len(spec.rSpecs) == 0 {
 		return fmt.Errorf("cannot have policy without any resources")
 	} else {
-		return ensureIdentityBasedPolicy(sess, spec)
+		return wh.ensureIdentityBasedPolicy(spec)
 	}
 }
 
-func ensureIdentityBasedPolicy(sess *session.Session, spec *policySpec) error {
+func(wh *AccountWarehouse) ensureIdentityBasedPolicy(spec *policySpec) error {
 	switch spec.principal.pType {
 	case userType:
-		return ensureUserPolicy(sess, spec)
+		return wh.ensureUserPolicy(spec)
 	case roleType:
-		return ensureRolePolicy(sess, spec)
+		return wh.ensureRolePolicy(spec)
 	default:
 		return fmt.Errorf("cannot generate policy for invalid spec with [%v] principal type", spec.principal.pType)
 	}
@@ -501,8 +503,8 @@ func stringHash(val string) string {
 	return fmt.Sprintf("%x", h)
 }
 
-func assumeRole(sessionName string, svcSts *sts.STS, roleArn string, ttl time.Duration) (*sts.AssumeRoleOutput, error) {
-	aro, err := svcSts.AssumeRole(&sts.AssumeRoleInput{
+func(wh *AccountWarehouse) assumeRole(sessionName string, roleArn string, ttl time.Duration) (*sts.AssumeRoleOutput, error) {
+	aro, err := wh.apiClient.AssumeRole(&sts.AssumeRoleInput{
 		RoleArn:         aws.String(roleArn),
 		RoleSessionName: aws.String(sessionName),
 		DurationSeconds: toSeconds(ttl),
@@ -513,8 +515,7 @@ func assumeRole(sessionName string, svcSts *sts.STS, roleArn string, ttl time.Du
 	return aro, nil
 }
 
-func (wh *AccountWarehouse) ensureAccessKey(ctx context.Context, sess *session.Session, userArn string, princSpec *principalSpec, svcUserArn string) (iam.AccessKey, error) {
-	svc := iam.New(sess)
+func (wh *AccountWarehouse) ensureAccessKey(ctx context.Context, princSpec *principalSpec, svcUserArn string) (iam.AccessKey, error) {
 	// garbage collection call
 	makeRoom := princSpec.params.ManagedKeysPerAccount - 1
 	keyTTL := timeutil.KeyTTL(princSpec.params.MaxKeyTtl, princSpec.params.ManagedKeysPerAccount)
@@ -524,7 +525,7 @@ func (wh *AccountWarehouse) ensureAccessKey(ctx context.Context, sess *session.S
 	}
 	accessKey, ok := wh.tmp[userId]
 	if !ok {
-		kres, err := svc.CreateAccessKey(&iam.CreateAccessKeyInput{
+		kres, err := wh.apiClient.CreateAccessKey(&iam.CreateAccessKeyInput{
 			UserName: aws.String(userId),
 		})
 		if err != nil {
@@ -536,12 +537,11 @@ func (wh *AccountWarehouse) ensureAccessKey(ctx context.Context, sess *session.S
 	return accessKey, nil
 }
 
-func (wh *AccountWarehouse) loadSvcUserArn(sess *session.Session) (string, error) {
-	svc := sts.New(sess)
+func (wh *AccountWarehouse) loadSvcUserArn() (string, error) {
 	if wh.svcUserArn != nil {
 		return *wh.svcUserArn, nil
 	} else {
-		gcio, err := svc.GetCallerIdentity(&sts.GetCallerIdentityInput{})
+		gcio, err := wh.apiClient.GetCallerIdentity(&sts.GetCallerIdentityInput{})
 		if err != nil {
 			return "", err
 		} else {
@@ -551,8 +551,7 @@ func (wh *AccountWarehouse) loadSvcUserArn(sess *session.Session) (string, error
 	}
 }
 
-func ensureRolePolicy(sess *session.Session, spec *policySpec) error {
-	svc := iam.New(sess)
+func(wh *AccountWarehouse) ensureRolePolicy(spec *policySpec) error {
 	// FIXME handle versioning
 	actions := valuesToJsonStringArray(spec.params.TargetRoles)
 	resourceArns := resourceArnsToJsonStringArray(spec.rSpecs)
@@ -567,7 +566,7 @@ func ensureRolePolicy(sess *session.Session, spec *policySpec) error {
 									"Resource":%s
 								}
 							}`, actions, resourceArns)
-	_, err := svc.PutRolePolicy(&iam.PutRolePolicyInput{
+	_, err := wh.apiClient.PutRolePolicy(&iam.PutRolePolicyInput{
 		PolicyName:     aws.String(spec.principal.getId()),
 		RoleName:       aws.String(spec.principal.getId()),
 		PolicyDocument: aws.String(policy),
@@ -579,8 +578,7 @@ func ensureRolePolicy(sess *session.Session, spec *policySpec) error {
 	}
 }
 
-func ensureUserPolicy(sess *session.Session, spec *policySpec) error {
-	svc := iam.New(sess)
+func(wh *AccountWarehouse) ensureUserPolicy(spec *policySpec) error {
 	// FIXME handle versioning
 	actions := valuesToJsonStringArray(spec.params.TargetRoles)
 	resources := resourceArnsToJsonStringArray(spec.rSpecs)
@@ -598,15 +596,15 @@ func ensureUserPolicy(sess *session.Session, spec *policySpec) error {
 									}
 								}
 							}`, actions, resources, (time.Now().Add(spec.params.Ttl)).Format(time.RFC3339) )
-	f := func() error { return putUserPolicy(svc, spec, policy) }
+	f := func() error { return wh.putUserPolicy(spec, policy) }
 	if err := backoff.Retry(f, exponentialBackoff); err != nil {
 		return err
 	}
 	return nil
 }
 
-func putUserPolicy(svc *iam.IAM, spec *policySpec, policy string) error {
-	_, err := svc.PutUserPolicy(&iam.PutUserPolicyInput{
+func(wh *AccountWarehouse) putUserPolicy(spec *policySpec, policy string) error {
+	_, err := wh.apiClient.PutUserPolicy(&iam.PutUserPolicyInput{
 		PolicyName:     aws.String(spec.principal.getId()),
 		UserName:       aws.String(spec.principal.getId()),
 		PolicyDocument: aws.String(policy),
@@ -624,15 +622,14 @@ func putUserPolicy(svc *iam.IAM, spec *policySpec, policy string) error {
 
 
 // ensures user is created and returns non-empty user ARN if successful
-func ensureUser(sess *session.Session, spec *principalSpec) (string, error) {
-	svc := iam.New(sess)
+func(wh *AccountWarehouse) ensureUser(spec *principalSpec) (string, error) {
 	var userArn string
-	guo, err := svc.GetUser(&iam.GetUserInput{
+	guo, err := wh.apiClient.GetUser(&iam.GetUserInput{
 		UserName: aws.String(spec.getId()),
 	})
 	if err != nil {
 		if aerr, ok := err.(awserr.Error); ok && aerr.Code() == iam.ErrCodeNoSuchEntityException {
-			cuo, err := svc.CreateUser(&iam.CreateUserInput{
+			cuo, err := wh.apiClient.CreateUser(&iam.CreateUserInput{
 				UserName: aws.String(spec.getId()),
 				// TODO: Make prefix configurable for different dam deployments GcpServiceAccountProject
 				Path: aws.String("/ddap/"),
@@ -652,10 +649,9 @@ func ensureUser(sess *session.Session, spec *principalSpec) (string, error) {
 	return userArn, nil
 }
 
-func ensureRole(sess *session.Session, spec *principalSpec) (string, error) {
-	svc := iam.New(sess)
+func(wh *AccountWarehouse) ensureRole(spec *principalSpec) (string, error) {
 	// FIXME should include a path based on the DAM URL
-	gro, err := svc.GetRole(&iam.GetRoleInput{
+	gro, err := wh.apiClient.GetRole(&iam.GetRoleInput{
 		RoleName: aws.String(spec.getId()),
 	})
 	if err != nil {
@@ -670,7 +666,7 @@ func ensureRole(sess *session.Session, spec *principalSpec) (string, error) {
 									"Action": "sts:AssumeRole"
 								}
 							}`, spec.damPrincipalArn)
-			cro, err := svc.CreateRole(&iam.CreateRoleInput{
+			cro, err := wh.apiClient.CreateRole(&iam.CreateRoleInput{
 				AssumeRolePolicyDocument: aws.String(policy),
 				RoleName:                 aws.String(spec.getId()),
 				MaxSessionDuration:       toSeconds(TemporaryCredMaxTtl),
@@ -705,18 +701,6 @@ func ensureRole(sess *session.Session, spec *principalSpec) (string, error) {
 func toSeconds(duration time.Duration) *int64 {
 	seconds := duration.Nanoseconds() / time.Second.Nanoseconds()
 	return &seconds
-}
-
-func createSession() (*session.Session, error) {
-	rootSess, err := session.NewSession(&aws.Config{
-		// FIXME pull from config
-		Region: aws.String("ca-central-1"),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("unable to create AWS root session: %v", err)
-	} else {
-		return rootSess, err
-	}
 }
 
 func resourceArnsToJsonStringArray(rSpecs []*resourceSpec) string {
