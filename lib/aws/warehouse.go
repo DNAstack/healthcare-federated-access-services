@@ -213,11 +213,9 @@ type ResourceParams struct {
 	Vars                  map[string]string
 	TargetRoles           []string
 	TargetScopes          []string
-	TokenFormat           string
 	DamResourceId         string
 	DamViewId             string
 	DamRoleId             string
-	View                  *v1.View
 	ServiceTemplate       *v1.ServiceTemplate
 }
 

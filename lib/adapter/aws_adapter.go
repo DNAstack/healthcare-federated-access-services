@@ -140,11 +140,9 @@ func createAwsResourceTokenCreationParams(userID string, input *Action) (*aws.Re
 		Vars:                  vars,
 		TargetRoles:           roles,
 		TargetScopes:          scopes,
-		TokenFormat:           input.TokenFormat,
 		DamResourceId:         input.ResourceId,
 		DamViewId:             input.ViewId,
 		DamRoleId:             input.GrantRole,
-		View:                  input.View,
 		ServiceTemplate:       input.ServiceTemplate,
 	}, nil
 }
