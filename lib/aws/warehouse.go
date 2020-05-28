@@ -258,15 +258,23 @@ type policySpec struct {
 	params    *ResourceParams
 }
 
+func (spec *policySpec) getId() string {
+	return spec.principal.getDamResourceViewRoleId()
+}
+
 func (spec *principalSpec) getId() string {
 	switch spec.pType {
 	case userType:
 		return convertDamUserIdToAwsName(spec.params.UserId, spec.damPrincipalArn)
 	case roleType:
-		return fmt.Sprintf("%s,%s,%s@%s", spec.params.DamResourceId, spec.params.DamViewId, spec.params.DamRoleId, extractUserName(spec.damPrincipalArn))
+		return spec.getDamResourceViewRoleId()
 	default:
 		panic(fmt.Sprintf("cannot get ID for princpal type [%v]", spec.pType))
 	}
+}
+
+func (spec *principalSpec) getDamResourceViewRoleId() string {
+	return fmt.Sprintf("%s,%s,%s@%s", spec.params.DamResourceId, spec.params.DamViewId, spec.params.DamRoleId, extractUserName(spec.damPrincipalArn))
 }
 
 func (spec *principalSpec) getArn() string {
@@ -490,15 +498,24 @@ func convertToAwsSafeIdentifier(val string) string {
 }
 
 func(wh *AccountWarehouse) assumeRole(sessionName string, roleArn string, ttl time.Duration) (*sts.AssumeRoleOutput, error) {
-	aro, err := wh.apiClient.AssumeRole(&sts.AssumeRoleInput{
-		RoleArn:         aws.String(roleArn),
-		RoleSessionName: aws.String(sessionName),
-		DurationSeconds: toSeconds(ttl),
-	})
+	var aro *sts.AssumeRoleOutput
+	f := func() error {
+		var err error
+		aro, err = wh.apiClient.AssumeRole(&sts.AssumeRoleInput{
+			RoleArn:         aws.String(roleArn),
+			RoleSessionName: aws.String(sessionName),
+			DurationSeconds: toSeconds(ttl),
+		})
+
+		return err
+	}
+
+	err := backoff.Retry(f, exponentialBackoff)
 	if err != nil {
 		return nil, fmt.Errorf("unable to assume role %s: %v", roleArn, err)
+	} else {
+		return aro, nil
 	}
-	return aro, nil
 }
 
 func (wh *AccountWarehouse) ensureAccessKey(ctx context.Context, princSpec *principalSpec, svcUserArn string) (iam.AccessKey, error) {
@@ -538,13 +555,22 @@ func(wh *AccountWarehouse) ensureRolePolicy(spec *policySpec) error {
 									"Resource":%s
 								}
 							}`, actions, resourceArns)
+	f := func() error { return wh.putRolePolicy(spec, policy) }
+	return backoff.Retry(f, exponentialBackoff)
+}
+
+func (wh *AccountWarehouse) putRolePolicy(spec *policySpec, policy string) error {
 	_, err := wh.apiClient.PutRolePolicy(&iam.PutRolePolicyInput{
-		PolicyName:     aws.String(spec.principal.getId()),
+		PolicyName:     aws.String(spec.getId()),
 		RoleName:       aws.String(spec.principal.getId()),
 		PolicyDocument: aws.String(policy),
 	})
 	if err != nil {
-		return fmt.Errorf("unable to create AWS role policy %s: %v", spec.principal.getId(), err)
+		if aerr, ok := err.(awserr.Error); ok && aerr.Code() == "MalformedPolicy" && strings.Contains(aerr.Message(), "Invalid principal in policy") {
+			return fmt.Errorf("unable to create AWS user policy %s: %v", spec.principal.getId(), err)
+		} else {
+			return backoff.Permanent(fmt.Errorf("unable to create AWS role policy %s: %v", spec.principal.getId(), err))
+		}
 	} else {
 		return nil
 	}
@@ -569,15 +595,12 @@ func(wh *AccountWarehouse) ensureUserPolicy(spec *policySpec) error {
 								}
 							}`, actions, resources, (time.Now().Add(spec.params.Ttl)).Format(time.RFC3339) )
 	f := func() error { return wh.putUserPolicy(spec, policy) }
-	if err := backoff.Retry(f, exponentialBackoff); err != nil {
-		return err
-	}
-	return nil
+	return backoff.Retry(f, exponentialBackoff)
 }
 
 func(wh *AccountWarehouse) putUserPolicy(spec *policySpec, policy string) error {
 	_, err := wh.apiClient.PutUserPolicy(&iam.PutUserPolicyInput{
-		PolicyName:     aws.String(spec.principal.getId()),
+		PolicyName:     aws.String(spec.getId()),
 		UserName:       aws.String(spec.principal.getId()),
 		PolicyDocument: aws.String(policy),
 	})
