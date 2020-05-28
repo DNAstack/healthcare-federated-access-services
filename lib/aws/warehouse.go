@@ -101,11 +101,33 @@ type ApiClient interface {
 
 // AccountWarehouse is used to create AWS IAM Users and temporary credentials
 type AccountWarehouse struct {
-	svcUserArn *string
+	svcUserArn string
 	store      storage.Store
 	tmp        map[string]iam.AccessKey
 	keyGC      *processgc.KeyGC
 	apiClient  ApiClient
+}
+
+// NewWarehouse creates a new AccountWarehouse using the provided client
+// and options.
+func NewWarehouse(ctx context.Context, store storage.Store, awsClient ApiClient) (*AccountWarehouse, error) {
+	wh := &AccountWarehouse{
+		store:     store,
+		tmp:       make(map[string]iam.AccessKey),
+		keyGC:     nil,
+		apiClient: awsClient,
+	}
+	if gcio, err := awsClient.GetCallerIdentity(&sts.GetCallerIdentityInput{}); err != nil {
+		return nil, err
+	} else {
+		wh.svcUserArn = *gcio.Arn
+	}
+
+	wh.keyGC = processgc.NewKeyGC("aws_key_gc", wh, store, defaultGcFrequency, defaultKeysPerAccount, func(account *clouds.Account) bool {
+		return true
+	})
+	go wh.Run(ctx)
+	return wh, nil
 }
 
 func (wh *AccountWarehouse) GetServiceAccounts(ctx context.Context, project string) (<-chan *clouds.Account, error) {
@@ -232,11 +254,19 @@ type principalSpec struct {
 	params          *ResourceParams
 }
 
+type policySpec struct {
+	principal *principalSpec
+	rSpecs    []*resourceSpec
+	params    *ResourceParams
+}
+
 func (spec *principalSpec) getId() string {
 	switch spec.pType {
 	case userType:
+		// FIXME IC identifier is too long for long domain names
 		return convertToAwsSafeIdentifier(spec.params.UserId)
 	case roleType:
+		// FIXME should include a path based on the DAM URL
 		return spec.params.DamResourceId + "," + spec.params.DamViewId + "," + spec.params.DamRoleId
 	default:
 		panic(fmt.Sprintf("cannot get ID for princpal type [%v]", spec.pType))
@@ -277,28 +307,6 @@ func extractDBGroupName(arn string) string {
 	return pathParts[len(pathParts)-1]
 }
 
-type policySpec struct {
-	principal *principalSpec
-	rSpecs    []*resourceSpec
-	params    *ResourceParams
-}
-
-// NewWarehouse creates a new AccountWarehouse using the provided client
-// and options.
-func NewWarehouse(ctx context.Context, store storage.Store, awsClient ApiClient) (*AccountWarehouse, error) {
-	wh := &AccountWarehouse{
-		store:     store,
-		tmp:       make(map[string]iam.AccessKey),
-		keyGC:     nil,
-		apiClient: awsClient,
-	}
-	wh.keyGC = processgc.NewKeyGC("aws_key_gc", wh, store, defaultGcFrequency, defaultKeysPerAccount, func(account *clouds.Account) bool {
-		return true
-	})
-	go wh.Run(ctx)
-	return wh, nil
-}
-
 func RegisterAccountGC(store storage.Store, wh *AccountWarehouse) error {
 	// IMPORTANT this transaction is closed in `process.go`
 	// FIXME, maybe move this transaction creation closer to where it is used/closed?
@@ -306,11 +314,7 @@ func RegisterAccountGC(store storage.Store, wh *AccountWarehouse) error {
 	if err != nil {
 		return err
 	}
-	svcUserArn, err := wh.loadSvcUserArn()
-	if err != nil {
-		return err
-	}
-	return wh.RegisterAccountProject(extractAccount(svcUserArn), tx)
+	return wh.RegisterAccountProject(extractAccount(wh.svcUserArn), tx)
 }
 
 // MintTokenWithTTL returns an AccountKey or an AccessToken depending on the TTL requested.
@@ -319,12 +323,7 @@ func (wh *AccountWarehouse) MintTokenWithTTL(ctx context.Context, params *Resour
 		return nil, fmt.Errorf("given ttl [%s] is greater than max ttl [%s]", params.Ttl, params.MaxKeyTtl)
 	}
 
-	// FIXME load in constructor function?
-	svcUserArn, err := wh.loadSvcUserArn()
-	if err != nil {
-		return nil, err
-	}
-	princSpec := determinePrincipalSpec(svcUserArn, params)
+	princSpec := determinePrincipalSpec(wh.svcUserArn, params)
 
 	rSpecs, err := determineResourceSpecs(params)
 	if err != nil {
@@ -345,7 +344,7 @@ func (wh *AccountWarehouse) MintTokenWithTTL(ctx context.Context, params *Resour
 		return nil, err
 	}
 
-	return wh.ensureTokenResult(ctx, principalArn, princSpec, svcUserArn)
+	return wh.ensureTokenResult(ctx, principalArn, princSpec)
 }
 
 func determineResourceSpecs(params *ResourceParams) ([]*resourceSpec, error) {
@@ -414,10 +413,10 @@ func determinePrincipalSpec(svcUserArn string, params *ResourceParams) *principa
 	return princSpec
 }
 
-func (wh *AccountWarehouse) ensureTokenResult(ctx context.Context, principalArn string, princSpec *principalSpec, svcUserArn string) (*clouds.AwsResourceTokenResult, error) {
+func (wh *AccountWarehouse) ensureTokenResult(ctx context.Context, principalArn string, princSpec *principalSpec) (*clouds.AwsResourceTokenResult, error) {
 	switch princSpec.pType {
 	case userType:
-		return wh.ensureAccessKeyResult(ctx, principalArn, princSpec, svcUserArn)
+		return wh.ensureAccessKeyResult(ctx, principalArn, princSpec)
 	case roleType:
 		return wh.createTempCredentialResult(principalArn, princSpec.params)
 	default:
@@ -440,8 +439,8 @@ func(wh *AccountWarehouse) createTempCredentialResult(principalArn string, param
 	}, nil
 }
 
-func (wh *AccountWarehouse) ensureAccessKeyResult(ctx context.Context, principalArn string, princSpec *principalSpec, svcUserArn string) (*clouds.AwsResourceTokenResult, error) {
-	accessKey, err := wh.ensureAccessKey(ctx, princSpec, svcUserArn)
+func (wh *AccountWarehouse) ensureAccessKeyResult(ctx context.Context, principalArn string, princSpec *principalSpec) (*clouds.AwsResourceTokenResult, error) {
+	accessKey, err := wh.ensureAccessKey(ctx, princSpec, wh.svcUserArn)
 	if err != nil {
 		return nil, err
 	}
@@ -546,25 +545,11 @@ func (wh *AccountWarehouse) ensureAccessKey(ctx context.Context, princSpec *prin
 	return accessKey, nil
 }
 
-func (wh *AccountWarehouse) loadSvcUserArn() (string, error) {
-	if wh.svcUserArn != nil {
-		return *wh.svcUserArn, nil
-	} else {
-		gcio, err := wh.apiClient.GetCallerIdentity(&sts.GetCallerIdentityInput{})
-		if err != nil {
-			return "", err
-		} else {
-			wh.svcUserArn = gcio.Arn
-			return *wh.svcUserArn, nil
-		}
-	}
-}
-
 func(wh *AccountWarehouse) ensureRolePolicy(spec *policySpec) error {
 	// FIXME handle versioning
 	actions := valuesToJsonStringArray(spec.params.TargetRoles)
 	resourceArns := resourceArnsToJsonStringArray(spec.rSpecs)
-	// FIXME user serialization library
+	// FIXME use serialization library
 	policy := fmt.Sprintf(
 		`{
 								"Version":"2012-10-17",
@@ -591,7 +576,7 @@ func(wh *AccountWarehouse) ensureUserPolicy(spec *policySpec) error {
 	// FIXME handle versioning
 	actions := valuesToJsonStringArray(spec.params.TargetRoles)
 	resources := resourceArnsToJsonStringArray(spec.rSpecs)
-	// FIXME user serialization library
+	// FIXME use serialization library
 	policy := fmt.Sprintf(
 		`{
 								"Version":"2012-10-17",
@@ -659,7 +644,6 @@ func(wh *AccountWarehouse) ensureUser(spec *principalSpec) (string, error) {
 }
 
 func(wh *AccountWarehouse) ensureRole(spec *principalSpec) (string, error) {
-	// FIXME should include a path based on the DAM URL
 	gro, err := wh.apiClient.GetRole(&iam.GetRoleInput{
 		RoleName: aws.String(spec.getId()),
 	})
@@ -678,6 +662,8 @@ func(wh *AccountWarehouse) ensureRole(spec *principalSpec) (string, error) {
 			cro, err := wh.apiClient.CreateRole(&iam.CreateRoleInput{
 				AssumeRolePolicyDocument: aws.String(policy),
 				RoleName:                 aws.String(spec.getId()),
+				// FIXME should get path from config
+				Path:                     aws.String("/ddap/"),
 				MaxSessionDuration:       toSeconds(TemporaryCredMaxTtl),
 				Tags: []*iam.Tag{
 					{

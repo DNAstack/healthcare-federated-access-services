@@ -12,10 +12,7 @@ type SdkApiClient struct {
 }
 
 func(sac *SdkApiClient) createSession() (*session.Session, error) {
-	rootSess, err := session.NewSession(&aws.Config{
-		// FIXME pull from config
-		Region: aws.String("ca-central-1"),
-	})
+	rootSess, err := session.NewSession(&aws.Config{})
 	if err != nil {
 		return nil, fmt.Errorf("unable to create AWS root session: %v", err)
 	} else {
