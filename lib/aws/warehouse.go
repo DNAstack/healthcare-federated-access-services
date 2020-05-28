@@ -32,10 +32,8 @@ import (
 	"strings"
 	"time"
 
-	"crypto/sha1"
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/clouds"
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage"
-	"hash"
 )
 
 const (
@@ -263,11 +261,9 @@ type policySpec struct {
 func (spec *principalSpec) getId() string {
 	switch spec.pType {
 	case userType:
-		// FIXME IC identifier is too long for long domain names
-		return convertToAwsSafeIdentifier(spec.params.UserId)
+		return convertDamUserIdToAwsName(spec.params.UserId, spec.damPrincipalArn)
 	case roleType:
-		// FIXME should include a path based on the DAM URL
-		return spec.params.DamResourceId + "," + spec.params.DamViewId + "," + spec.params.DamRoleId
+		return fmt.Sprintf("%s,%s,%s@%s", spec.params.DamResourceId, spec.params.DamViewId, spec.params.DamRoleId, extractUserName(spec.damPrincipalArn))
 	default:
 		panic(fmt.Sprintf("cannot get ID for princpal type [%v]", spec.pType))
 	}
@@ -425,13 +421,13 @@ func (wh *AccountWarehouse) ensureTokenResult(ctx context.Context, principalArn 
 }
 
 func(wh *AccountWarehouse) createTempCredentialResult(principalArn string, params *ResourceParams) (*clouds.AwsResourceTokenResult, error) {
-	userId := convertUserIdToSessionName(params.UserId)
+	userId := convertDamUserIdToAwsName(params.UserId, wh.svcUserArn)
 	aro, err := wh.assumeRole(userId, principalArn, params.Ttl)
 	if err != nil {
 		return nil, err
 	}
 	return &clouds.AwsResourceTokenResult{
-		Account: *aro.AssumedRoleUser.AssumedRoleId,
+		Account: *aro.AssumedRoleUser.Arn,
 		AccessKeyId:   *aro.Credentials.AccessKeyId,
 		SecretAccessKey:   *aro.Credentials.SecretAccessKey,
 		SessionToken:   *aro.Credentials.SessionToken,
@@ -479,13 +475,9 @@ func(wh *AccountWarehouse) ensureIdentityBasedPolicy(spec *policySpec) error {
 	}
 }
 
-func convertToAwsSafeIdentifier(val string) string {
-	return strings.ReplaceAll(val, "|", "@")
-}
-
-func convertUserIdToSessionName(userId string) string{
-	parts := strings.SplitN(userId, "|", 2)
-	sessionName := parts[0] + "@" + stringHash(parts[1])
+func convertDamUserIdToAwsName(damUserId, damSvcArn string) string{
+	parts := strings.SplitN(damUserId, "|", 2)
+	sessionName := parts[0] + "@" + extractUserName(damSvcArn)
 	maxLen := 64
 	if len(sessionName) < 64 {
 		maxLen = len(sessionName)
@@ -493,22 +485,8 @@ func convertUserIdToSessionName(userId string) string{
 	return sessionName[0:maxLen]
 }
 
-// TODO: figure out right place to have this code
-//CreateHash method
-func createHash(byteStr []byte) []byte {
-	var hashVal hash.Hash
-	hashVal = sha1.New()
-	hashVal.Write(byteStr)
-
-	var bytes []byte
-
-	bytes = hashVal.Sum(nil)
-	return bytes
-}
-
-func stringHash(val string) string {
-	h := createHash([]byte(val))
-	return fmt.Sprintf("%x", h)
+func convertToAwsSafeIdentifier(val string) string {
+	return strings.ReplaceAll(val, "|", "@")
 }
 
 func(wh *AccountWarehouse) assumeRole(sessionName string, roleArn string, ttl time.Duration) (*sts.AssumeRoleOutput, error) {
@@ -691,6 +669,13 @@ func(wh *AccountWarehouse) ensureRole(spec *principalSpec) (string, error) {
 	} else {
 		return *gro.Role.Arn, nil
 	}
+}
+
+func extractUserName(userArn string) string {
+	arnParts := strings.Split(userArn, ":")
+	pathParts := strings.Split(arnParts[5], "/")
+
+	return pathParts[len(pathParts)-1]
 }
 
 func toSeconds(duration time.Duration) *int64 {

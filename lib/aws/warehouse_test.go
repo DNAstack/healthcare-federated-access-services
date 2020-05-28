@@ -244,7 +244,9 @@ func TestNewAwsWarehouse(t *testing.T) {
 
 func TestAWS_MintTokenWithShortLivedTTL_Bucket(t *testing.T) {
 	store := fakestore.New()
-	apiClient := NewMockApiClient("12345678", "dam-user-id")
+	damPrincipalId := "dam-user-id"
+	awsAccount := "12345678"
+	apiClient := NewMockApiClient(awsAccount, damPrincipalId)
 	wh, _ := NewWarehouse(context.Background(), store, apiClient)
 
 	vars := map[string]string{
@@ -270,14 +272,17 @@ func TestAWS_MintTokenWithShortLivedTTL_Bucket(t *testing.T) {
 
 	result, err := wh.MintTokenWithTTL(context.Background(), params)
 
-	expectedAccount := fmt.Sprintf("%s,%s,%s", params.DamResourceId, params.DamViewId, params.DamRoleId)
-	validateMintedRoleCredentials(t, expectedAccount, result, err)
-	validateCreatedRolePolicy(t, apiClient, expectedAccount, params.TargetRoles)
+	expectedRoleName := fmt.Sprintf("%s,%s,%s@%s", params.DamResourceId, params.DamViewId, params.DamRoleId, damPrincipalId)
+	expectedRoleArn := fmt.Sprintf("arn:aws:iam::%s:role/ddap/%s", awsAccount, expectedRoleName)
+	validateMintedRoleCredentials(t, expectedRoleArn, result, err)
+	validateCreatedRolePolicy(t, apiClient, expectedRoleName, params.TargetRoles)
 }
 
 func TestAWS_MintTokenWithShortLivedTTL_Redshift(t *testing.T) {
 	store := fakestore.New()
-	apiClient := NewMockApiClient("12345678", "dam-user-id")
+	awsAccount := "12345678"
+	damPrincipalId := "dam-user-id"
+	apiClient := NewMockApiClient(awsAccount, damPrincipalId)
 	wh, _ := NewWarehouse(context.Background(), store, apiClient)
 
 	vars := map[string]string{
@@ -309,15 +314,17 @@ func TestAWS_MintTokenWithShortLivedTTL_Redshift(t *testing.T) {
 
 	result, err := wh.MintTokenWithTTL(context.Background(), params)
 
-	expectedAccount := fmt.Sprintf("%s,%s,%s", params.DamResourceId, params.DamViewId, params.DamRoleId)
-	validateMintedRoleCredentials(t, expectedAccount, result, err)
-	validateCreatedRolePolicy(t, apiClient, expectedAccount, params.TargetRoles)
+	expectedRoleName := fmt.Sprintf("%s,%s,%s@%s", params.DamResourceId, params.DamViewId, params.DamRoleId, damPrincipalId)
+	expectedRoleArn := fmt.Sprintf("arn:aws:iam::%s:role/ddap/%s", awsAccount, expectedRoleName)
+	validateMintedRoleCredentials(t, expectedRoleArn, result, err)
+	validateCreatedRolePolicy(t, apiClient, expectedRoleName, params.TargetRoles)
 }
 
 func TestAWS_MintTokenWithLongLivedTTL_Bucket(t *testing.T) {
 	store := fakestore.New()
 	awsAccount := "12345678"
-	apiClient := NewMockApiClient(awsAccount, "dam-user-id")
+	damPrincipalId := "dam-user-id"
+	apiClient := NewMockApiClient(awsAccount, damPrincipalId)
 	wh, _ := NewWarehouse(context.Background(), store, apiClient)
 
 	vars := map[string]string{
@@ -343,7 +350,7 @@ func TestAWS_MintTokenWithLongLivedTTL_Bucket(t *testing.T) {
 
 	result, err := wh.MintTokenWithTTL(context.Background(), params)
 
-	expectedUserName := "ic_abc123@fake-ic"
+	expectedUserName := "ic_abc123@" + damPrincipalId
 	expectedUserArn := fmt.Sprintf("arn:aws:iam::%s:user/%s", awsAccount, expectedUserName)
 	validateMintedAccessKey(t, expectedUserArn, result, err)
 	validateCreatedUserPolicy(t, apiClient, expectedUserName, params.TargetRoles)
@@ -352,7 +359,8 @@ func TestAWS_MintTokenWithLongLivedTTL_Bucket(t *testing.T) {
 func TestAWS_MintTokenWithLongLivedTTL_Redshift(t *testing.T) {
 	store := fakestore.New()
 	awsAccount := "12345678"
-	apiClient := NewMockApiClient(awsAccount, "dam-user-id")
+	damPrincipalId := "dam-user-id"
+	apiClient := NewMockApiClient(awsAccount, damPrincipalId)
 	wh, _ := NewWarehouse(context.Background(), store, apiClient)
 
 	vars := map[string]string{
@@ -384,7 +392,7 @@ func TestAWS_MintTokenWithLongLivedTTL_Redshift(t *testing.T) {
 
 	result, err := wh.MintTokenWithTTL(context.Background(), params)
 
-	expectedUserName := "ic_abc123@fake-ic"
+	expectedUserName := "ic_abc123@" + damPrincipalId
 	expectedUserArn := fmt.Sprintf("arn:aws:iam::%s:user/%s", awsAccount, expectedUserName)
 	validateMintedAccessKey(t, expectedUserArn, result, err)
 	validateCreatedUserPolicy(t, apiClient, expectedUserName, params.TargetRoles)
