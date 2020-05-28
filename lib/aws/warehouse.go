@@ -324,33 +324,44 @@ func (wh *AccountWarehouse) MintTokenWithTTL(ctx context.Context, params *Resour
 	if err != nil {
 		return nil, err
 	}
-	princSpec := &principalSpec{
-		damPrincipalArn: svcUserArn,
-		params:          params,
+	princSpec := determinePrincipalSpec(svcUserArn, params)
+
+	rSpecs, err := determineResourceSpecs(params)
+	if err != nil {
+		return nil, err
+	}
+	polSpec := &policySpec{
+		principal: princSpec,
+		rSpecs:    rSpecs,
+		params:    params,
 	}
 
-	if params.Ttl > TemporaryCredMaxTtl {
-		princSpec.pType = userType
-	} else {
-		princSpec.pType = roleType
+	principalArn, err := wh.ensurePrincipal(princSpec)
+	if err != nil {
+		return nil, err
+	}
+	err = wh.ensurePolicy(polSpec)
+	if err != nil {
+		return nil, err
 	}
 
-	var polSpec *policySpec
+	return wh.ensureTokenResult(ctx, principalArn, princSpec, svcUserArn)
+}
+
+func determineResourceSpecs(params *ResourceParams) ([]*resourceSpec, error) {
+	var rSpecs []*resourceSpec
 	switch params.ServiceTemplate.ServiceName {
 	case S3ItemFormat:
 		bucket, ok := params.Vars["bucket"]
 		if !ok {
 			return nil, fmt.Errorf("no bucket specified")
 		}
-		rSpec := &resourceSpec{
-			id:    bucket,
-			arn:   fmt.Sprintf("arn:aws:s3:::%s/*", bucket),
-			rType: bucketType,
-		}
-		polSpec = &policySpec{
-			principal: princSpec,
-			rSpecs:    []*resourceSpec{rSpec},
-			params:    params,
+		rSpecs = []*resourceSpec{
+			{
+				id:    bucket,
+				arn:   fmt.Sprintf("arn:aws:s3:::%s/*", bucket),
+				rType: bucketType,
+			},
 		}
 	case RedshiftItemFormat:
 		clusterArn, ok := params.Vars["cluster"]
@@ -369,7 +380,6 @@ func (wh *AccountWarehouse) MintTokenWithTTL(ctx context.Context, params *Resour
 			id:    dbuser,
 		}
 		group, ok := params.Vars["group"]
-		var rSpecs []*resourceSpec
 		if ok {
 			rSpecs = []*resourceSpec{
 				clusterSpec,
@@ -381,28 +391,27 @@ func (wh *AccountWarehouse) MintTokenWithTTL(ctx context.Context, params *Resour
 				},
 			}
 		} else {
-			rSpecs = []*resourceSpec{clusterSpec,userSpec}
+			rSpecs = []*resourceSpec{clusterSpec, userSpec}
 		}
 
-		polSpec = &policySpec{
-			principal: princSpec,
-			rSpecs:    rSpecs,
-			params:    params,
-		}
 	default:
 		return nil, fmt.Errorf("unrecognized item format [%s] for AWS target adapter", params.ServiceTemplate.ServiceName)
 	}
+	return rSpecs, nil
+}
 
-	principalArn, err := wh.ensurePrincipal(princSpec)
-	if err != nil {
-		return nil, err
-	}
-	err = wh.ensurePolicy(polSpec)
-	if err != nil {
-		return nil, err
+func determinePrincipalSpec(svcUserArn string, params *ResourceParams) *principalSpec {
+	princSpec := &principalSpec{
+		damPrincipalArn: svcUserArn,
+		params:          params,
 	}
 
-	return wh.ensureTokenResult(ctx, principalArn, princSpec, svcUserArn)
+	if params.Ttl > TemporaryCredMaxTtl {
+		princSpec.pType = userType
+	} else {
+		princSpec.pType = roleType
+	}
+	return princSpec
 }
 
 func (wh *AccountWarehouse) ensureTokenResult(ctx context.Context, principalArn string, princSpec *principalSpec, svcUserArn string) (*clouds.AwsResourceTokenResult, error) {
