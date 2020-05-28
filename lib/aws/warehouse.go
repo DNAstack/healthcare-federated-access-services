@@ -19,7 +19,7 @@ package aws
 import (
 	"context"
 	"fmt"
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/processaws"
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/processgc"
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/timeutil"
 	v1 "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/dam/v1"
 	"github.com/aws/aws-sdk-go/aws"
@@ -104,7 +104,7 @@ type AccountWarehouse struct {
 	svcUserArn *string
 	store      storage.Store
 	tmp        map[string]iam.AccessKey
-	keyGC      *processaws.KeyGC
+	keyGC      *processgc.KeyGC
 	apiClient  ApiClient
 }
 
@@ -115,7 +115,7 @@ func (wh *AccountWarehouse) GetServiceAccounts(ctx context.Context, project stri
 		f := func(acct *iam.User) error {
 			a := &clouds.Account{
 				ID:          aws.StringValue(acct.UserName),
-				DisplayName: aws.StringValue(acct.UserId),
+				DisplayName: aws.StringValue(acct.UserName),
 			}
 			select {
 			case c <- a:
@@ -152,7 +152,7 @@ func (wh *AccountWarehouse) RemoveServiceAccount(ctx context.Context, project, a
 	//       Deleting an IAM User . Before attempting to delete a user,  remove  the
 	//       following items
 	// Refer: https://docs.aws.amazon.com/IAM/latest/UserGuide/id_users_manage.html#id_users_deleting_cli
-	panic("implement me removeserviceaccount")
+	return fmt.Errorf("removing service accounts is not yet implemented")
 }
 
 //This method is the main method where key removal happens
@@ -292,7 +292,9 @@ func NewWarehouse(ctx context.Context, store storage.Store, awsClient ApiClient)
 		keyGC:     nil,
 		apiClient: awsClient,
 	}
-	wh.keyGC = processaws.NewKeyGC("aws_key_gc", wh, store, defaultGcFrequency, defaultKeysPerAccount)
+	wh.keyGC = processgc.NewKeyGC("aws_key_gc", wh, store, defaultGcFrequency, defaultKeysPerAccount, func(account *clouds.Account) bool {
+		return true
+	})
 	go wh.Run(ctx)
 	return wh, nil
 }
