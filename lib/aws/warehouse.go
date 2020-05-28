@@ -101,7 +101,6 @@ type ApiClient interface {
 type AccountWarehouse struct {
 	svcUserArn string
 	store      storage.Store
-	tmp        map[string]iam.AccessKey
 	keyGC      *processgc.KeyGC
 	apiClient  ApiClient
 }
@@ -111,7 +110,6 @@ type AccountWarehouse struct {
 func NewWarehouse(ctx context.Context, store storage.Store, awsClient ApiClient) (*AccountWarehouse, error) {
 	wh := &AccountWarehouse{
 		store:     store,
-		tmp:       make(map[string]iam.AccessKey),
 		keyGC:     nil,
 		apiClient: awsClient,
 	}
@@ -518,26 +516,23 @@ func(wh *AccountWarehouse) assumeRole(sessionName string, roleArn string, ttl ti
 	}
 }
 
-func (wh *AccountWarehouse) ensureAccessKey(ctx context.Context, princSpec *principalSpec, svcUserArn string) (iam.AccessKey, error) {
+func (wh *AccountWarehouse) ensureAccessKey(ctx context.Context, princSpec *principalSpec, svcUserArn string) (*iam.AccessKey, error) {
 	// garbage collection call
 	makeRoom := princSpec.params.ManagedKeysPerAccount - 1
 	keyTTL := timeutil.KeyTTL(princSpec.params.MaxKeyTtl, princSpec.params.ManagedKeysPerAccount)
 	userId := princSpec.getId()
 	if _, _, err := wh.ManageAccountKeys(ctx, svcUserArn, userId, princSpec.params.Ttl, keyTTL, time.Now(), int64(makeRoom)); err != nil {
-		return iam.AccessKey{}, fmt.Errorf("garbage collecting keys: %v", err)
+		return nil, fmt.Errorf("garbage collecting keys: %v", err)
 	}
-	accessKey, ok := wh.tmp[userId]
-	if !ok {
-		kres, err := wh.apiClient.CreateAccessKey(&iam.CreateAccessKeyInput{
-			UserName: aws.String(userId),
-		})
-		if err != nil {
-			return iam.AccessKey{}, fmt.Errorf("unable to create access key for user %s: %v", userId, err)
-		}
-		accessKey = *kres.AccessKey
-		wh.tmp[userId] = accessKey
+
+	kres, err := wh.apiClient.CreateAccessKey(&iam.CreateAccessKeyInput{
+		UserName: aws.String(userId),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("unable to create access key for user %s: %v", userId, err)
 	}
-	return accessKey, nil
+
+	return kres.AccessKey, nil
 }
 
 func(wh *AccountWarehouse) ensureRolePolicy(spec *policySpec) error {
