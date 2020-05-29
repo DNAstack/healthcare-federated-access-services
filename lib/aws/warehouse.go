@@ -86,6 +86,15 @@ type ApiClient interface {
 	CreateRole(input *iam.CreateRoleInput) (*iam.CreateRoleOutput, error)
 }
 
+// ResourceTokenResult is returned from MintTokenWithTTL for aws adapter.
+type ResourceTokenResult struct {
+	Account         string
+	Format          string
+	AccessKeyId     string
+	SecretAccessKey string
+	SessionToken    string
+}
+
 // AccountWarehouse is used to create AWS IAM Users and temporary credentials
 type AccountWarehouse struct {
 	svcUserArn string
@@ -295,7 +304,7 @@ func extractDBGroupName(arn string) string {
 }
 
 // MintTokenWithTTL returns an AccountKey or an AccessToken depending on the TTL requested.
-func (wh *AccountWarehouse) MintTokenWithTTL(ctx context.Context, params *ResourceParams) (*clouds.AwsResourceTokenResult, error) {
+func (wh *AccountWarehouse) MintTokenWithTTL(ctx context.Context, params *ResourceParams) (*ResourceTokenResult, error) {
 	if params.Ttl > params.MaxKeyTtl {
 		return nil, fmt.Errorf("given ttl [%s] is greater than max ttl [%s]", params.Ttl, params.MaxKeyTtl)
 	}
@@ -388,7 +397,7 @@ func determinePrincipalSpec(svcUserArn string, params *ResourceParams) *principa
 	return princSpec
 }
 
-func (wh *AccountWarehouse) ensureTokenResult(ctx context.Context, principalArn string, princSpec *principalSpec) (*clouds.AwsResourceTokenResult, error) {
+func (wh *AccountWarehouse) ensureTokenResult(ctx context.Context, principalArn string, princSpec *principalSpec) (*ResourceTokenResult, error) {
 	switch princSpec.pType {
 	case userType:
 		return wh.ensureAccessKeyResult(ctx, principalArn, princSpec)
@@ -399,13 +408,13 @@ func (wh *AccountWarehouse) ensureTokenResult(ctx context.Context, principalArn 
 	}
 }
 
-func(wh *AccountWarehouse) createTempCredentialResult(principalArn string, params *ResourceParams) (*clouds.AwsResourceTokenResult, error) {
+func(wh *AccountWarehouse) createTempCredentialResult(principalArn string, params *ResourceParams) (*ResourceTokenResult, error) {
 	userId := convertDamUserIdToAwsName(params.UserId, wh.svcUserArn)
 	aro, err := wh.assumeRole(userId, principalArn, params.Ttl)
 	if err != nil {
 		return nil, err
 	}
-	return &clouds.AwsResourceTokenResult{
+	return &ResourceTokenResult{
 		Account: *aro.AssumedRoleUser.Arn,
 		AccessKeyId:   *aro.Credentials.AccessKeyId,
 		SecretAccessKey:   *aro.Credentials.SecretAccessKey,
@@ -414,12 +423,12 @@ func(wh *AccountWarehouse) createTempCredentialResult(principalArn string, param
 	}, nil
 }
 
-func (wh *AccountWarehouse) ensureAccessKeyResult(ctx context.Context, principalArn string, princSpec *principalSpec) (*clouds.AwsResourceTokenResult, error) {
+func (wh *AccountWarehouse) ensureAccessKeyResult(ctx context.Context, principalArn string, princSpec *principalSpec) (*ResourceTokenResult, error) {
 	accessKey, err := wh.ensureAccessKey(ctx, princSpec, wh.svcUserArn)
 	if err != nil {
 		return nil, err
 	}
-	return &clouds.AwsResourceTokenResult{
+	return &ResourceTokenResult{
 		Account: principalArn,
 		AccessKeyId: *accessKey.AccessKeyId,
 		SecretAccessKey: *accessKey.SecretAccessKey,

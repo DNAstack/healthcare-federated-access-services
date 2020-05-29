@@ -17,7 +17,6 @@ package aws
 import (
 	"context"
 	"fmt"
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/clouds"
 	v1 "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/dam/v1"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
@@ -343,7 +342,7 @@ func TestAWS_MintTokenWithLongLivedTTL_Redshift(t *testing.T) {
 	validateCreatedUserPolicy(t, apiClient, expectedUserName, params.TargetRoles)
 }
 
-func validateMintedRoleCredentials(t *testing.T, expectedAccount string, result *clouds.AwsResourceTokenResult, err error) {
+func validateMintedRoleCredentials(t *testing.T, expectedAccount string, result *ResourceTokenResult, err error) {
 	if err != nil {
 		t.Errorf("expected minting a token but got error: %v", err)
 		return
@@ -367,7 +366,7 @@ func validateMintedRoleCredentials(t *testing.T, expectedAccount string, result 
 	}
 }
 
-func validateMintedAccessKey(t *testing.T, expectedAccount string, result *clouds.AwsResourceTokenResult, err error) {
+func validateMintedAccessKey(t *testing.T, expectedAccount string, result *ResourceTokenResult, err error) {
 	if err != nil {
 		t.Errorf("expected minting a token but got error: %v", err)
 		return
