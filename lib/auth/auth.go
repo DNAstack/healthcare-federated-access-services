@@ -23,7 +23,6 @@ import (
 	"context"
 	"net/http"
 	"strings"
-	"sync"
 
 	"cloud.google.com/go/logging" /* copybara-comment: logging */
 	"github.com/gorilla/mux" /* copybara-comment */
@@ -36,7 +35,6 @@ import (
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/oathclients" /* copybara-comment: oathclients */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/permissions" /* copybara-comment: permissions */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/strutil" /* copybara-comment: strutil */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/verifier" /* copybara-comment: verifier */
 
 	glog "github.com/golang/glog" /* copybara-comment */
 )
@@ -90,51 +88,17 @@ var (
 // Checker stores information and functions for authorization check.
 type Checker struct {
 	// Audit log logger.
-	logger *logging.Client
-	// Accepted oidc issuer url.
-	issuer string
-	// permissions contains methor to check if user admin permission.
-	permissions *permissions.Permissions
-	// fetchClientSecrets fetchs client id and client secret.
-	fetchClientSecrets func() (map[string]string, error)
-	// transformIdentity transform as needed, will run just after token convert to identity.
+	Logger *logging.Client
+	// Accepted oidc Issuer url.
+	Issuer string
+	// Permissions contains methor to check if user admin permission.
+	Permissions *permissions.Permissions
+	// FetchClientSecrets fetchs client id and client secret.
+	FetchClientSecrets func() (map[string]string, error)
+	// TransformIdentity transform as needed, will run just after token convert to identity.
 	// eg. hydra stores custom claims in "ext" fields for access token. need to move to top
 	// level field.
-	transformIdentity func(*ga4gh.Identity) *ga4gh.Identity
-	// init the verifier.AccessTokenVerifier
-	init sync.Once
-	// access token verifier
-	verifier *verifier.AccessTokenVerifier
-}
-
-func (s *Checker) getVerifier(ctx context.Context) (*verifier.AccessTokenVerifier, error) {
-	var err error
-	s.init.Do(func() {
-		s.verifier, err = verifier.NewAccessTokenVerifier(ctx, s.issuer)
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	return s.verifier, nil
-}
-
-// NewChecker creates checker for authorization check.
-// ctx: used to creates oidc token verifier, may store httpclient for mock.
-// logger: audit log logger.
-// issuer: accepted oidc issuer url.
-// permissions: contains method to check if user admin permission.
-// fetchClientSecrets: fetches client id and client secret.
-// transformIdentity: transform as needed, will run just after token convert to identity.
-func NewChecker(logger *logging.Client, issuer string, permissions *permissions.Permissions, fetchClientSecrets func() (map[string]string, error), transformIdentity func(*ga4gh.Identity) *ga4gh.Identity) *Checker {
-	return &Checker{
-		logger:             logger,
-		issuer:             issuer,
-		permissions:        permissions,
-		fetchClientSecrets: fetchClientSecrets,
-		transformIdentity:  transformIdentity,
-	}
+	TransformIdentity func(*ga4gh.Identity) *ga4gh.Identity
 }
 
 // Context (i.e. auth.Context) is authorization information that is stored within the request context.
@@ -184,7 +148,7 @@ func WithAuth(handler func(http.ResponseWriter, *http.Request), checker *Checker
 		if err != nil {
 			log.ErrorType = errutil.ErrorReason(err)
 		}
-		writeAccessLog(checker.logger, log, err, r)
+		writeAccessLog(checker.Logger, log, err, r)
 		if err != nil {
 			httputils.WriteError(w, err)
 			return
@@ -269,7 +233,7 @@ func (s *Checker) check(r *http.Request, require Require) (*auditlog.AccessLog, 
 // checks if the client is known and the provided secret matches the secret
 // for that client.
 func (s *Checker) verifyClientCredentials(client, secret string, require Require) error {
-	secrets, err := s.fetchClientSecrets()
+	secrets, err := s.FetchClientSecrets()
 	if err != nil {
 		return errutil.WithErrorReason(errClientUnavailable, err)
 	}
@@ -308,7 +272,7 @@ func (s *Checker) verifyAccessToken(r *http.Request, clientID string, require Re
 		return &ga4gh.Identity{}, false, err
 	}
 
-	isAdmin, err := s.permissions.CheckAdmin(id)
+	isAdmin, err := s.Permissions.CheckAdmin(id)
 	if err != nil {
 		return id, false, errutil.WithErrorReason(errCheckAdminFailed, status.Errorf(codes.Unavailable, "loadPermissions failed: %v", err))
 	}
@@ -346,17 +310,16 @@ func (s *Checker) verifiedBearerToken(r *http.Request, authHeader, clientID stri
 	}
 	tok := parts[1]
 
-	v, err := s.getVerifier(r.Context())
-	if err != nil {
-		return nil, err
-	}
-
-	if err := verifyToken(r.Context(), v, tok, s.issuer, clientID); err != nil {
+	if err := verifyToken(r.Context(), tok, s.Issuer, clientID); err != nil {
 		return nil, err
 	}
 
 	id, err := s.tokenToIdentityWithoutVerification(tok)
 	if err != nil {
+		return nil, err
+	}
+
+	if err := verifyIdentity(id, s.Issuer, clientID); err != nil {
 		return nil, err
 	}
 
@@ -371,21 +334,47 @@ func (s *Checker) tokenToIdentityWithoutVerification(tok string) (*ga4gh.Identit
 		return nil, errutil.WithErrorReason(errTokenInvalid, status.Errorf(codes.Unauthenticated, "invalid token format: %v", err))
 	}
 	id.Issuer = normalize(id.Issuer)
-	return s.transformIdentity(id), nil
+	return s.TransformIdentity(id), nil
+}
+
+// verifyIdentity verifies:
+// - token issuer
+// - subject is not empty
+// - aud and azp allow given clientID
+// - id.Valid(): expire, notBefore, issueAt
+func verifyIdentity(id *ga4gh.Identity, issuer, clientID string) error {
+	iss := normalize(issuer)
+	if id.Issuer != iss {
+		// TODO: token maybe leaked at this point, consider auto revoke or contact user/admin.
+		return errutil.WithErrorReason(errIssMismatch, status.Errorf(codes.Unauthenticated, "token unauthorized: for issuer %s", id.Issuer))
+	}
+
+	if len(id.Subject) == 0 {
+		return errutil.WithErrorReason(errSubMissing, status.Error(codes.Unauthenticated, "token unauthorized: no subject"))
+	}
+
+	if !ga4gh.IsAudience(id, clientID, iss) {
+		// TODO: token maybe leaked at this point, consider auto revoke or contact user/admin.
+		return errutil.WithErrorReason(errAudMismatch, status.Errorf(codes.Unauthenticated, "token unauthorized: unauthorized party"))
+	}
+
+	if err := id.Valid(); err != nil {
+		return errutil.WithErrorReason(errIDInvalid, status.Errorf(codes.Unauthenticated, "token unauthorized: %v", err))
+	}
+
+	return nil
 }
 
 // verifyToken oidc spec verfiy token.
-func verifyToken(ctx context.Context, v *verifier.AccessTokenVerifier, tok, iss, clientID string) error {
-	err := v.Verify(ctx, tok, verifier.AccessTokenOption(clientID, iss))
-	if err == nil {
-		return nil
+func verifyToken(ctx context.Context, tok, iss, clientID string) error {
+	v, err := ga4gh.GetOIDCTokenVerifier(ctx, clientID, iss)
+	if err != nil {
+		return errutil.WithErrorReason(errVerifierUnavailable, status.Errorf(codes.Unauthenticated, "GetOIDCTokenVerifier failed: %v", err))
 	}
-
-	reason := errutil.ErrorReason(err)
-	if len(reason) == 0 {
-		reason = errIDVerifyFailed
+	if _, err = v.Verify(ctx, tok); err != nil {
+		return errutil.WithErrorReason(errIDVerifyFailed, status.Errorf(codes.Unauthenticated, "token verify failed: %v", err))
 	}
-	return errutil.WithErrorReason(reason, status.Errorf(codes.Unauthenticated, "token verify failed: %v", err))
+	return nil
 }
 
 // normalize ensure the issuer string and tailling slash.

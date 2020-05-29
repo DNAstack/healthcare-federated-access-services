@@ -16,7 +16,6 @@
 package persona
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"html/template"
@@ -28,10 +27,11 @@ import (
 	"google.golang.org/grpc/codes" /* copybara-comment */
 	"google.golang.org/grpc/status" /* copybara-comment */
 	"gopkg.in/square/go-jose.v2" /* copybara-comment */
+	"github.com/dgrijalva/jwt-go" /* copybara-comment */
+	"github.com/golang/protobuf/jsonpb" /* copybara-comment */
 	"github.com/pborman/uuid" /* copybara-comment */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh" /* copybara-comment: ga4gh */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/httputils" /* copybara-comment: httputils */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/kms/localsign" /* copybara-comment: localsign */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/srcutil" /* copybara-comment: srcutil */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage" /* copybara-comment: storage */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/strutil" /* copybara-comment: strutil */
@@ -94,9 +94,14 @@ func NewBroker(issuerURL string, key *testkeys.Key, service, path string, useOID
 }
 
 // Sign the jwt with the private key in Server.
-func (s *Server) Sign(header map[string]string, claim interface{}) (string, error) {
-	signer := localsign.New(s.key)
-	return signer.SignJWT(context.Background(), claim, header)
+func (s *Server) Sign(header map[string]string, claim jwt.Claims) (string, error) {
+	jot := jwt.NewWithClaims(jwt.SigningMethodRS256, claim)
+
+	for k, v := range header {
+		jot.Header[k] = v
+	}
+
+	return jot.SignedString(s.key.Private)
 }
 
 // Config returns the DAM configuration currently in use.
@@ -163,7 +168,7 @@ func (s *Server) oidcUserInfo(w http.ResponseWriter, r *http.Request) {
 		httputils.WriteError(w, status.Errorf(codes.PermissionDenied, "persona %q not found", sub))
 		return
 	}
-	id, err := ToIdentity(r.Context(), pname, persona, "openid profile identities ga4gh_passport_v1 email", s.issuerURL)
+	id, err := ToIdentity(pname, persona, "openid profile identities ga4gh_passport_v1 email", s.issuerURL)
 	if err != nil {
 		httputils.WriteError(w, status.Errorf(codes.PermissionDenied, "preparing persona %q: %v", sub, err))
 		return
@@ -268,8 +273,14 @@ func (s *Server) sendLoginPage(redirect, state, nonce, clientID, scope string, w
 		}
 	}
 
+	json, err := (&jsonpb.Marshaler{}).MarshalToString(list)
+	if err != nil {
+		httputils.WriteError(w, status.Errorf(codes.Unavailable, "%v", err))
+		return
+	}
+
 	args := &loginPageArgs{
-		ProviderList:   list,
+		ProviderList:   json,
 		AssetDir:       "/static",
 		ServiceTitle:   serviceTitle,
 		LoginInfoTitle: loginInfoTitle,
@@ -281,7 +292,7 @@ func (s *Server) sendLoginPage(redirect, state, nonce, clientID, scope string, w
 }
 
 type loginPageArgs struct {
-	ProviderList   *ipb.LoginPageProviders
+	ProviderList   string
 	AssetDir       string
 	ServiceTitle   string
 	LoginInfoTitle string

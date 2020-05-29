@@ -20,9 +20,11 @@ import (
 	glog "github.com/golang/glog" /* copybara-comment */
 )
 
+const livenessPage = `{"status":"Service is Up and Running"}`
+
 // LivenessCheckHandler implements an application liveness checker for Google App Engine Flex apps
 func LivenessCheckHandler(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
+	WriteHTMLResp(w, livenessPage)
 }
 
 // StopHandler will cause make the server exit.
@@ -31,17 +33,16 @@ func StopHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // NewPageHandler creates a new handler that serves the given HTML page.
-func NewPageHandler(page string, additionalCSP *CSP) func(w http.ResponseWriter, r *http.Request) {
-	return Page{page: page, additionalCSP: additionalCSP}.Handler
+func NewPageHandler(page string) func(w http.ResponseWriter, r *http.Request) {
+	return Page{Page: page}.Handler
 }
 
 // Page is handler for a fixed HTML page.
 type Page struct {
-	page          string
-	additionalCSP *CSP
+	Page string
 }
 
 // Handler serve the stored page.
 func (s Page) Handler(w http.ResponseWriter, r *http.Request) {
-	WriteHTMLResp(w, s.page, s.additionalCSP)
+	WriteHTMLResp(w, s.Page)
 }

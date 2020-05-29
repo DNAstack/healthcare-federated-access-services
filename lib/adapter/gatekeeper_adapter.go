@@ -16,14 +16,15 @@ package adapter
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"time"
 
+	"github.com/dgrijalva/jwt-go" /* copybara-comment */
 	"github.com/pborman/uuid" /* copybara-comment */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/clouds" /* copybara-comment: clouds */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh" /* copybara-comment: ga4gh */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/httputils" /* copybara-comment: httputils */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/kms" /* copybara-comment: kms */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/srcutil" /* copybara-comment: srcutil */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage" /* copybara-comment: storage */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/timeutil" /* copybara-comment: timeutil */
@@ -42,27 +43,32 @@ const (
 
 // GatekeeperToken is the token format that is minted here.
 type GatekeeperToken struct {
-	*ga4gh.StdClaims
-	Scopes []string `json:"scopes,omitempty"`
+	*jwt.StandardClaims
+	AuthorizedParty string   `json:"azp,omitempty"`
+	Scopes          []string `json:"scopes,omitempty"`
 }
 
 // GatekeeperAdapter generates downstream access tokens.
 type GatekeeperAdapter struct {
-	desc   map[string]*pb.ServiceDescriptor
-	signer kms.Signer
+	desc       map[string]*pb.ServiceDescriptor
+	privateKey string
 }
 
 // NewGatekeeperAdapter creates a GatekeeperAdapter.
-func NewGatekeeperAdapter(store storage.Store, warehouse clouds.ResourceTokenCreator, signer kms.Signer, adapters *ServiceAdapters) (ServiceAdapter, error) {
+func NewGatekeeperAdapter(store storage.Store, warehouse clouds.ResourceTokenCreator, secrets *pb.DamSecrets, adapters *ServiceAdapters) (ServiceAdapter, error) {
 	var msg pb.ServicesResponse
 	path := adapterFilePath(gatekeeperName)
 	if err := srcutil.LoadProto(path, &msg); err != nil {
 		return nil, fmt.Errorf("reading %q service descriptors from path %q: %v", aggregatorName, path, err)
 	}
+	keys := secrets.GetGatekeeperTokenKeys()
+	if keys == nil {
+		return nil, fmt.Errorf("gatekeeper token keys not found")
+	}
 
 	return &GatekeeperAdapter{
-		desc:   msg.Services,
-		signer: signer,
+		desc:       msg.Services,
+		privateKey: keys.PrivateKey,
 	}, nil
 }
 
@@ -99,19 +105,25 @@ func (a *GatekeeperAdapter) MintToken(ctx context.Context, input *Action) (*Mint
 	if input.MaxTTL > 0 && input.TTL > input.MaxTTL {
 		return nil, fmt.Errorf("minting gatekeeper token: TTL of %q exceeds max TTL of %q", timeutil.TTLString(input.TTL), timeutil.TTLString(input.MaxTTL))
 	}
-
+	block, _ := pem.Decode([]byte(a.privateKey))
+	priv, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parsing private key: %v", err)
+	}
 	now := time.Now()
-	var auds []string
+	aud := ""
 	// TODO: support standard audience formats instead of space-delimited.
 	for _, item := range input.View.Items {
 		if item.Args == nil {
 			continue
 		}
 		if a, ok := item.Args["aud"]; ok {
-			auds = append(auds, a)
+			if aud != "" {
+				aud += " "
+			}
+			aud += a
 		}
 	}
-
 	scopes := []string{}
 	arg, ok := input.ServiceRole.ServiceArgs["scopes"]
 	if ok {
@@ -119,23 +131,26 @@ func (a *GatekeeperAdapter) MintToken(ctx context.Context, input *Action) (*Mint
 	}
 
 	claims := &GatekeeperToken{
-		StdClaims: &ga4gh.StdClaims{
+		StandardClaims: &jwt.StandardClaims{
 			Issuer:    input.Issuer,
 			Subject:   input.Identity.Subject,
-			Audience:  auds,
+			Audience:  aud,
 			ExpiresAt: now.Add(input.TTL).Unix(),
 			NotBefore: now.Add(-1 * time.Minute).Unix(),
 			IssuedAt:  now.Unix(),
-			ID:        uuid.New(),
+			Id:        uuid.New(),
 		},
 		Scopes: scopes,
 	}
 
-	token, err := a.signer.SignJWT(ctx, claims, nil)
-	if err != nil {
-		return nil, fmt.Errorf("minting gatekeeper token: sign token failed: %v", err)
-	}
+	jot := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 
+	// TODO: should set key id properly and sync with JWKS.
+	jot.Header[keyID] = keyID
+	token, err := jot.SignedString(priv)
+	if err != nil {
+		return nil, err
+	}
 	return &MintTokenResult{
 		Credentials: map[string]string{
 			"account":      input.Identity.Subject,

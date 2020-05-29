@@ -44,7 +44,7 @@ func TestWriteNonProtoResp(t *testing.T) {
 		},
 		Body: `{"content":"something"}`,
 	}
-	if diff := cmp.Diff(want, w); diff != "" {
+	if diff := cmp.Diff(w, want); diff != "" {
 		t.Errorf("WriteNonProtoResp(); Writer diff (-want +got):\n%s", diff)
 	}
 }
@@ -64,7 +64,7 @@ func TestWriteNonProtoResp_Proto(t *testing.T) {
 		},
 		Body: `{"seconds":60}`,
 	}
-	if diff := cmp.Diff(want, w); diff != "" {
+	if diff := cmp.Diff(w, want); diff != "" {
 		t.Errorf("WriteNonProtoResp(); Writer diff (-want +got):\n%s", diff)
 	}
 }
@@ -84,7 +84,7 @@ func TestWriteResp(t *testing.T) {
 		},
 		Body: `"60s"`,
 	}
-	if diff := cmp.Diff(want, w); diff != "" {
+	if diff := cmp.Diff(w, want); diff != "" {
 		t.Errorf("WriteResp(); Writer diff (-want +got):\n%s", diff)
 	}
 }
@@ -104,7 +104,7 @@ func TestWriteError(t *testing.T) {
 		Body: `{"code":5,"message":"resource not found"}`,
 		Code: http.StatusNotFound,
 	}
-	if diff := cmp.Diff(want, w); diff != "" {
+	if diff := cmp.Diff(w, want); diff != "" {
 		t.Errorf("WriteError(); Writer diff (-want +got):\n%s", diff)
 	}
 }
@@ -117,56 +117,27 @@ func TestWriteError_NilError(t *testing.T) {
 	want := &FakeWriter{
 		Headers: http.Header{},
 	}
-	if diff := cmp.Diff(want, w); diff != "" {
+	if diff := cmp.Diff(w, want); diff != "" {
 		t.Errorf("WriteError(); Writer diff (-want +got):\n%s", diff)
 	}
 }
 
 func TestWriteHTMLResp(t *testing.T) {
-	csp := "default-src 'self';font-src https://fonts.gstatic.com;frame-ancestors 'self';img-src 'self' data: http://icon-library.com;script-src 'self' https://ajax.googleapis.com https://code.getmdl.io;style-src 'self' https://code.getmdl.io https://fonts.googleapis.com"
-	tests := []struct {
-		name string
-		page string
-		csp  *CSP
-		want *FakeWriter
-	}{
-		{
-			name: "additional csp",
-			page: "some html code",
-			csp:  CSPFromString("a b"),
-			want: &FakeWriter{
-				Headers: http.Header{
-					"Content-Security-Policy": {"a b;" + csp},
-					"X-Frame-Options":         {"SAMEORIGIN"},
-					"Content-Type":            {"text/html"},
-				},
-				Body: "some html code",
-			},
+	w := NewFakeWriter()
+
+	WriteHTMLResp(w, "some html code")
+
+	want := &FakeWriter{
+		Headers: http.Header{
+			"Access-Control-Allow-Headers": {"Content-Type, Origin, Accept, Authorization, X-Link-Authorization"},
+			"Access-Control-Allow-Methods": {"GET,POST,PUT,PATCH,DELETE,OPTIONS"},
+			"Access-Control-Allow-Origin":  {"*"},
+			"Content-Type":                 {"text/html"},
 		},
-		{
-			name: "no additional csp",
-			page: "some html code",
-			csp:  nil,
-			want: &FakeWriter{
-				Headers: http.Header{
-					"Content-Security-Policy": {csp},
-					"X-Frame-Options":         {"SAMEORIGIN"},
-					"Content-Type":            {"text/html"},
-				},
-				Body: "some html code",
-			},
-		},
+		Body: "some html code",
 	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			w := NewFakeWriter()
-
-			WriteHTMLResp(w, tc.page, tc.csp)
-			if diff := cmp.Diff(tc.want, w); diff != "" {
-				t.Errorf("WriteHTMLResp(); Writer diff (-want +got):\n%s", diff)
-			}
-		})
+	if diff := cmp.Diff(w, want); diff != "" {
+		t.Errorf("WriteHTMLResp(); Writer diff (-want +got):\n%s", diff)
 	}
 }
 
@@ -193,7 +164,7 @@ func TestWriteRedirect(t *testing.T) {
 		Body: RedirectHTMLPage(dst),
 		Code: http.StatusSeeOther,
 	}
-	if diff := cmp.Diff(want, w); diff != "" {
+	if diff := cmp.Diff(w, want); diff != "" {
 		t.Errorf("WriteRedirect(); Writer diff (-want +got):\n%s", diff)
 	}
 }
@@ -226,7 +197,7 @@ func TestWriteRedirect_ParsedDestination(t *testing.T) {
 		Body: RedirectHTMLPage(dst),
 		Code: http.StatusSeeOther,
 	}
-	if diff := cmp.Diff(want, w); diff != "" {
+	if diff := cmp.Diff(w, want); diff != "" {
 		t.Errorf("WriteRedirect(); Writer diff (-want +got):\n%s", diff)
 	}
 }
@@ -254,7 +225,7 @@ func TestWriteRedirect_RelativeDestination(t *testing.T) {
 		Body: RedirectHTMLPage("/srcresources/" + dst),
 		Code: http.StatusSeeOther,
 	}
-	if diff := cmp.Diff(want, w); diff != "" {
+	if diff := cmp.Diff(w, want); diff != "" {
 		t.Errorf("WriteRedirect(); Writer diff (-want +got):\n%s", diff)
 	}
 }
@@ -282,7 +253,7 @@ func TestWriteRedirect_RelativeDestinationAtRoot(t *testing.T) {
 		Body: RedirectHTMLPage(dst),
 		Code: http.StatusSeeOther,
 	}
-	if diff := cmp.Diff(want, w); diff != "" {
+	if diff := cmp.Diff(w, want); diff != "" {
 		t.Errorf("WriteRedirect(); Writer diff (-want +got):\n%s", diff)
 	}
 }
@@ -329,7 +300,7 @@ func TestWriteRedirect_FullyEncodedRedirectURLParameter(t *testing.T) {
 		Body: RedirectHTMLPage(dst),
 		Code: http.StatusSeeOther,
 	}
-	if diff := cmp.Diff(want, w); diff != "" {
+	if diff := cmp.Diff(w, want); diff != "" {
 		t.Errorf("WriteRedirect(); Writer diff (-want +got):\n%s", diff)
 	}
 }
@@ -346,7 +317,7 @@ func TestWriteCorsHeaders(t *testing.T) {
 			"Access-Control-Allow-Origin":  {"*"},
 		},
 	}
-	if diff := cmp.Diff(want, w); diff != "" {
+	if diff := cmp.Diff(w, want); diff != "" {
 		t.Errorf("WriteCorsHeaders(); Writer diff (-want +got):\n%s", diff)
 	}
 }

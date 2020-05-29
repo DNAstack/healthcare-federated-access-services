@@ -38,7 +38,7 @@ func ToAuditLog(e *lepb.LogEntry) (*apb.AuditLog, error) {
 	}
 	switch t {
 	case "access_log":
-		return ToRequestLog(e)
+		return ToAccessLog(e)
 	case "policy_decision_log":
 		return ToPolicyLog(e)
 	default:
@@ -46,9 +46,9 @@ func ToAuditLog(e *lepb.LogEntry) (*apb.AuditLog, error) {
 	}
 }
 
-// ToRequestLog converts an entry for access log to an audit log.
+// ToAccessLog converts an entry for access log to an audit log.
 // Assumes that e is not nil.
-func ToRequestLog(e *lepb.LogEntry) (*apb.AuditLog, error) {
+func ToAccessLog(e *lepb.LogEntry) (*apb.AuditLog, error) {
 	name := logID(e)
 	labels := e.GetLabels()
 
@@ -62,9 +62,7 @@ func ToRequestLog(e *lepb.LogEntry) (*apb.AuditLog, error) {
 		glog.Warningf("invalid log decition value")
 	}
 
-	return &apb.AuditLog{
-		Name:        name,
-		Type:        apb.LogType_REQUEST,
+	l := &apb.AccessLog{
 		ServiceName: labels["service_name"],
 		ServiceType: labels["service_type"],
 
@@ -85,7 +83,9 @@ func ToRequestLog(e *lepb.LogEntry) (*apb.AuditLog, error) {
 		CallerIp:         e.GetHttpRequest().GetRemoteIp(),
 		HttpResponseCode: int64(e.GetHttpRequest().GetStatus()),
 		HttpRequest:      nil,
-	}, nil
+	}
+
+	return &apb.AuditLog{Name: name, AccessLog: l}, nil
 }
 
 // ToPolicyLog converts an entry for access log to an audit log.
@@ -109,9 +109,7 @@ func ToPolicyLog(e *lepb.LogEntry) (*apb.AuditLog, error) {
 		glog.Warningf("invalid log ttl: %v", labels["ttl"])
 	}
 
-	return &apb.AuditLog{
-		Name:        name,
-		Type:        apb.LogType_POLICY,
+	l := &apb.PolicyLog{
 		ServiceName: labels["service_name"],
 		ServiceType: labels["service_type"],
 
@@ -128,9 +126,10 @@ func ToPolicyLog(e *lepb.LogEntry) (*apb.AuditLog, error) {
 		ResourceName: labels["resource"],
 		Ttl:          timeutil.DurationProto(ttl),
 
-		CartId:         labels["cart_id"],
+		CartId:        labels["cart_id"],
 		ConfigRevision: labels["config_revision"],
-	}, nil
+	}
+	return &apb.AuditLog{Name: name, PolicyLog: l}, nil
 }
 
 func logID(e *lepb.LogEntry) string {

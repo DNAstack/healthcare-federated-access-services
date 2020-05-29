@@ -18,30 +18,29 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/coreos/go-oidc" /* copybara-comment */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh" /* copybara-comment: ga4gh */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/verifier" /* copybara-comment: verifier */
 )
 
 // OIDCIdentityTranslator verifies signatures for tokens returned by an OIDC endpoint and in the
 // standard GA4GH identity format.
 type OIDCIdentityTranslator struct {
-	verifier *verifier.PassportVerifier
+	verifier *oidc.IDTokenVerifier
 }
 
 // NewOIDCIdentityTranslator creates a new OIDCIdentityTranslator with the provided issuer and
 // client ID.
 func NewOIDCIdentityTranslator(ctx context.Context, issuer, clientID string) (*OIDCIdentityTranslator, error) {
-	v, err := verifier.NewPassportVerifier(ctx, issuer, clientID)
+	v, err := ga4gh.GetOIDCTokenVerifier(ctx, clientID, issuer)
 	if err != nil {
 		return nil, err
 	}
-
 	return &OIDCIdentityTranslator{verifier: v}, nil
 }
 
 // TranslateToken implements the ga4gh.Translator interface.
 func (s *OIDCIdentityTranslator) TranslateToken(ctx context.Context, auth string) (*ga4gh.Identity, error) {
-	if err := s.verifier.Verify(ctx, auth); err != nil {
+	if _, err := s.verifier.Verify(ctx, auth); err != nil {
 		return nil, fmt.Errorf("verifying token: %v", err)
 	}
 	return s.translateToken(auth)

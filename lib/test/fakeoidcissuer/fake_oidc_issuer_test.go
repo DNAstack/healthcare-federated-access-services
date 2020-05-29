@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dgrijalva/jwt-go" /* copybara-comment */
 	"github.com/coreos/go-oidc" /* copybara-comment */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh" /* copybara-comment: ga4gh */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/persona" /* copybara-comment: persona */
@@ -39,11 +40,11 @@ func TestServer(t *testing.T) {
 		t.Fatalf("fakeoidcissuer.New(issuerURL) failed: %v", err)
 	}
 
-	claim := ga4gh.StdClaims{
+	claim := jwt.StandardClaims{
 		Issuer:    issuerURL,
 		IssuedAt:  now - 10000,
 		ExpiresAt: now + 10000,
-		Audience:  []string{aud},
+		Audience:  aud,
 	}
 	header := map[string]string{"kid": testkeys.PersonaBrokerKey.ID}
 

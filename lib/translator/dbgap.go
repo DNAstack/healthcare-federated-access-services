@@ -22,6 +22,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"net/http"
+	"path"
 	"regexp"
 	"strings"
 	"time"
@@ -29,7 +30,6 @@ import (
 	"gopkg.in/square/go-jose.v2/jwt" /* copybara-comment */
 	"github.com/coreos/go-oidc" /* copybara-comment */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh" /* copybara-comment: ga4gh */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/kms" /* copybara-comment: kms */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/strutil" /* copybara-comment: strutil */
 )
 
@@ -48,9 +48,9 @@ const (
 type DbGapTranslator struct {
 	publicKey *rsa.PublicKey
 
-	visaIssuer string
-	visaJKU    string
-	signer     kms.Signer
+	visaIssuer        string
+	visaJKU           string
+	signingPrivateKey *rsa.PrivateKey
 }
 
 type dbGapStudy struct {
@@ -121,20 +121,27 @@ func convertToOIDCIDToken(token dbGapIdToken) *oidc.IDToken {
 // NewDbGapTranslator creates a new DbGapTranslator with the provided public key. If the tokens
 // passed to this translator do not have an audience claim with a value equal to the
 // clientID value then they will be rejected.
-func NewDbGapTranslator(publicKey, selfIssuer string, signer kms.Signer) (*DbGapTranslator, error) {
-	if len(selfIssuer) == 0 {
+func NewDbGapTranslator(publicKey, selfIssuer, signingPrivateKey string) (*DbGapTranslator, error) {
+	if len(selfIssuer) == 0 || len(signingPrivateKey) == 0 {
 		return nil, fmt.Errorf("NewDbGapTranslator failed, selfIssuer or signingPrivateKey is empty")
 	}
 
-	jku := strings.TrimSuffix(selfIssuer, "/") + "/.well-known/jwks.json"
-
 	t := &DbGapTranslator{
 		visaIssuer: selfIssuer,
-		visaJKU:    jku,
-		signer:     signer,
+		visaJKU:    path.Join(selfIssuer, ".well-known/jwks.json"),
 	}
 
-	block, _ := pem.Decode([]byte(publicKey))
+	block, _ := pem.Decode([]byte(signingPrivateKey))
+	if block == nil {
+		return nil, fmt.Errorf("decode private key failed")
+	}
+	pri, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parsing private key: %v", err)
+	}
+	t.signingPrivateKey = pri
+
+	block, _ = pem.Decode([]byte(publicKey))
 	if block == nil {
 		return t, nil
 	}
@@ -178,7 +185,7 @@ func (s *DbGapTranslator) TranslateToken(ctx context.Context, auth string) (*ga4
 	if err := s.extractClaims(passport, &id, &claims); err != nil {
 		return nil, fmt.Errorf("extracting passport claims: %v", err)
 	}
-	return s.translateToken(ctx, convertToOIDCIDToken(id), claims, time.Now())
+	return s.translateToken(convertToOIDCIDToken(id), claims, time.Now())
 }
 
 func (s *DbGapTranslator) getURL(url, userTok string) (string, error) {
@@ -208,7 +215,7 @@ func (s *DbGapTranslator) extractClaims(tok string, id *dbGapIdToken, claims *db
 	return nil
 }
 
-func (s *DbGapTranslator) translateToken(ctx context.Context, token *oidc.IDToken, claims dbGapClaims, now time.Time) (*ga4gh.Identity, error) {
+func (s *DbGapTranslator) translateToken(token *oidc.IDToken, claims dbGapClaims, now time.Time) (*ga4gh.Identity, error) {
 	id := ga4gh.Identity{
 		Issuer:     token.Issuer,
 		Subject:    token.Subject,
@@ -296,7 +303,7 @@ func (s *DbGapTranslator) translateToken(ctx context.Context, token *oidc.IDToke
 			},
 			Scope: visaScope,
 		}
-		v, err := ga4gh.NewVisaFromData(ctx, &visa, s.visaJKU, s.signer)
+		v, err := ga4gh.NewVisaFromData(&visa, s.visaJKU, ga4gh.RS256, s.signingPrivateKey, fixedKeyID)
 		if err != nil {
 			return nil, fmt.Errorf("sign ControlledAccessGrants claim failed: %s", err)
 		}
@@ -326,7 +333,7 @@ func (s *DbGapTranslator) translateToken(ctx context.Context, token *oidc.IDToke
 			},
 			Scope: visaScope,
 		}
-		v, err := ga4gh.NewVisaFromData(ctx, &visa, s.visaJKU, s.signer)
+		v, err := ga4gh.NewVisaFromData(&visa, s.visaJKU, ga4gh.RS256, s.signingPrivateKey, fixedKeyID)
 		if err != nil {
 			return nil, fmt.Errorf("sign dbGap ClaimAffiliationAndRole claim failed: %s", err)
 		}
@@ -349,7 +356,7 @@ func (s *DbGapTranslator) translateToken(ctx context.Context, token *oidc.IDToke
 			},
 			Scope: visaScope,
 		}
-		v, err = ga4gh.NewVisaFromData(ctx, &visa, s.visaJKU, s.signer)
+		v, err = ga4gh.NewVisaFromData(&visa, s.visaJKU, ga4gh.RS256, s.signingPrivateKey, fixedKeyID)
 		if err != nil {
 			return nil, fmt.Errorf("sign org ClaimAffiliationAndRole claim failed: %s", err)
 		}

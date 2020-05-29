@@ -15,12 +15,10 @@
 package permissions
 
 import (
-	"context"
 	"testing"
 	"time"
 
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh" /* copybara-comment: ga4gh */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/kms/localsign" /* copybara-comment: localsign */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage" /* copybara-comment: storage */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/testkeys" /* copybara-comment: testkeys */
 
@@ -109,10 +107,7 @@ func TestAdmin(t *testing.T) {
 					Value: ga4gh.Value(tc.linkedIdentities),
 				},
 			}
-
-			signer := localsign.New(&testkeys.Default)
-			ctx := context.Background()
-			v, err := ga4gh.NewVisaFromData(ctx, d, ga4gh.JWTEmptyJKU, signer)
+			v, err := ga4gh.NewVisaFromData(d, ga4gh.JWTEmptyJKU, ga4gh.RS256, testkeys.Keys[testkeys.VisaIssuer0].Private, string(testkeys.VisaIssuer0))
 			if err != nil {
 				t.Fatalf("ga4gh.NewVisaFromData failed: %v", err)
 			}

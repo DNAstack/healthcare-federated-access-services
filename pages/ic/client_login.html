@@ -18,9 +18,11 @@
   <head>
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
     <script src="{{.AssetDir}}/js/client_login.js"></script>
+    <script>
+      var instructions = "{{.Instructions}}";
+    </script>
   </head>
-  <body>
+  <body onload="onInit(instructions);">
     <pre id="output"></pre>
-    <div id="instructions" data-instructions="{{.Instructions}}">
   </body>
 </html>

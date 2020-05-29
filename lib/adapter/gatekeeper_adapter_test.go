@@ -19,15 +19,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-cmp/cmp" /* copybara-comment */
-	"github.com/google/go-cmp/cmp/cmpopts" /* copybara-comment */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/adapter" /* copybara-comment: adapter */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/clouds" /* copybara-comment: clouds */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh" /* copybara-comment: ga4gh */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/kms/localsign" /* copybara-comment: localsign */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage" /* copybara-comment: storage */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/testkeys" /* copybara-comment: testkeys */
 
+	"github.com/google/go-cmp/cmp" /* copybara-comment */
+	"github.com/google/go-cmp/cmp/cmpopts" /* copybara-comment */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh" /* copybara-comment: ga4gh */
 	pb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/dam/v1" /* copybara-comment: go_proto */
 )
 
@@ -44,10 +42,7 @@ func TestGatekeeperAdapter(t *testing.T) {
 		ByServiceName: make(map[string]adapter.ServiceAdapter),
 		Descriptors:   make(map[string]*pb.ServiceDescriptor),
 	}
-
-	key := testkeys.Default
-	signer := localsign.New(&key)
-	adapt, err := adapter.NewGatekeeperAdapter(store, warehouse, signer, adapters)
+	adapt, err := adapter.NewGatekeeperAdapter(store, warehouse, secrets, adapters)
 	if err != nil {
 		t.Fatalf("new gatekeeper adapter: %v", err)
 	}

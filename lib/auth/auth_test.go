@@ -37,7 +37,6 @@ import (
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/test/fakesdl" /* copybara-comment: fakesdl */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/test" /* copybara-comment: test */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/testkeys" /* copybara-comment: testkeys */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/verifier" /* copybara-comment: verifier */
 
 	hrpb "google.golang.org/genproto/googleapis/logging/type" /* copybara-comment: http_request_go_proto */
 	lspb "google.golang.org/genproto/googleapis/logging/type" /* copybara-comment: log_severity_go_proto */
@@ -46,14 +45,6 @@ import (
 
 const (
 	issuerURL = "https://oidc.example.com/"
-
-	verifierErrParseFailed      = "token:parse_failed"
-	verifierErrSubMissing       = "token:sub_missing"
-	verifierErrIssuerNotMatch   = "token:issuer_not_match"
-	verifierErrInvalidSignature = "token:invalid_signature"
-	verifierErrInvalidAudience  = "token:invalid_aud"
-	verifierErrExpired          = "token:expired"
-	verifierErrFutureToken      = "token:future_token"
 )
 
 var (
@@ -108,7 +99,7 @@ func Test_ErrorAtClientSecret(t *testing.T) {
 			router, oidc, service, _, _, close := setup(t)
 			defer close()
 
-			service.fetchClientSecrets = func() (map[string]string, error) {
+			service.FetchClientSecrets = func() (map[string]string, error) {
 				return nil, status.Error(codes.Unavailable, "Unavailable")
 			}
 
@@ -132,7 +123,7 @@ func Test_ErrorAtClientSecret_Log(t *testing.T) {
 			router, oidc, service, _, logs, close := setup(t)
 			defer close()
 
-			service.fetchClientSecrets = func() (map[string]string, error) {
+			service.FetchClientSecrets = func() (map[string]string, error) {
 				return nil, status.Error(codes.Unavailable, "Unavailable")
 			}
 
@@ -348,7 +339,7 @@ func Test_RequiresToken_Error(t *testing.T) {
 
 	for _, tc := range tests {
 		for _, p := range paths {
-			t.Run(tc.name+" "+p, func(t *testing.T) {
+			t.Run(tc.name, func(t *testing.T) {
 				router, oidc, _, _, _, close := setup(t)
 				defer close()
 
@@ -374,7 +365,7 @@ func Test_RequiresToken_Error_Log(t *testing.T) {
 		{
 			name: "not a jwt",
 			tok:  "invalid",
-			et:   verifierErrParseFailed,
+			et:   errIDVerifyFailed,
 		},
 	}
 
@@ -382,7 +373,7 @@ func Test_RequiresToken_Error_Log(t *testing.T) {
 
 	for _, tc := range tests {
 		for _, p := range paths {
-			t.Run(tc.name+" "+p, func(t *testing.T) {
+			t.Run(tc.name, func(t *testing.T) {
 				router, oidc, _, _, logs, close := setup(t)
 				defer close()
 
@@ -457,7 +448,7 @@ func Test_RequiresToken_JWT_Invalid_Signature_Log(t *testing.T) {
 			sendRequest(http.MethodGet, p, test.TestClientID, test.TestClientSecret, tok, "", "", router, oidc)
 
 			ets := errTypesFromLogs(logs)
-			wantErrType := []errType{verifierErrInvalidSignature}
+			wantErrType := []errType{errIDVerifyFailed}
 			if diff := cmp.Diff(wantErrType, ets); len(diff) != 0 {
 				t.Errorf("error_type (-want +got): %s", diff)
 			}
@@ -559,7 +550,7 @@ func Test_RequiresToken_JWT_Claims_Invalid_Error(t *testing.T) {
 				Expiry:    now + 10000,
 				Audiences: ga4gh.NewAudience(test.TestClientID),
 			},
-			et: verifierErrSubMissing,
+			et: errSubMissing,
 		},
 		{
 			name: "expired",
@@ -570,7 +561,7 @@ func Test_RequiresToken_JWT_Claims_Invalid_Error(t *testing.T) {
 				Expiry:    now - 10000,
 				Audiences: ga4gh.NewAudience(test.TestClientID),
 			},
-			et: verifierErrExpired,
+			et: errIDVerifyFailed,
 		},
 		{
 			name: "future token",
@@ -581,7 +572,7 @@ func Test_RequiresToken_JWT_Claims_Invalid_Error(t *testing.T) {
 				Expiry:    now + 100000,
 				Audiences: ga4gh.NewAudience(test.TestClientID),
 			},
-			et: verifierErrFutureToken,
+			et: errIDInvalid,
 		},
 		{
 			name: "clientID in token not match in request",
@@ -592,7 +583,7 @@ func Test_RequiresToken_JWT_Claims_Invalid_Error(t *testing.T) {
 				Expiry:    now + 10000,
 				Audiences: ga4gh.NewAudience("invalid"),
 			},
-			et: verifierErrInvalidAudience,
+			et: errIDVerifyFailed,
 		},
 		{
 			name: "issuer not match",
@@ -603,7 +594,7 @@ func Test_RequiresToken_JWT_Claims_Invalid_Error(t *testing.T) {
 				Expiry:    now + 10000,
 				Audiences: ga4gh.NewAudience(test.TestClientID),
 			},
-			et: verifierErrIssuerNotMatch,
+			et: errIDVerifyFailed,
 		},
 	}
 
@@ -1241,10 +1232,13 @@ func setup(t *testing.T) (*mux.Router, *fakeoidcissuer.Server, *Checker, *handle
 
 	logs, close := fakesdl.New()
 
-	ctx := oidc.ContextWithClient(context.Background())
-	verifier.NewPassportVerifier(ctx, issuerURL, test.TestClientID)
-
-	c := NewChecker(logs.Client, issuerURL, permissions.New(store), clientSecrets, transformIdentity)
+	c := &Checker{
+		Logger:             logs.Client,
+		Issuer:             issuerURL,
+		Permissions:        permissions.New(store),
+		FetchClientSecrets: clientSecrets,
+		TransformIdentity:  transformIdentity,
+	}
 
 	stub := &handlerFuncStub{}
 

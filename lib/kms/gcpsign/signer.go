@@ -17,12 +17,9 @@ package gcpsign
 
 import (
 	"context"
-	"crypto/rsa"
 	"crypto/sha256"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"sort"
 
@@ -32,6 +29,7 @@ import (
 	"google.golang.org/grpc/codes" /* copybara-comment */
 	"google.golang.org/grpc/status" /* copybara-comment */
 	"gopkg.in/square/go-jose.v2" /* copybara-comment */
+	"github.com/dgrijalva/jwt-go" /* copybara-comment */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/retry" /* copybara-comment: retry */
 
 	rpb "google.golang.org/genproto/googleapis/cloud/kms/v1" /* copybara-comment: resources_go_proto */
@@ -126,24 +124,14 @@ func (s *Client) updateKeys(ctx context.Context) error {
 		}
 
 		id := getKeyID(version.Name)
-		block, _ := pem.Decode([]byte(pub.Pem))
-		if block == nil {
-			return fmt.Errorf("pem.Decode() failed")
-		}
-
-		parsed, err := x509.ParsePKIXPublicKey(block.Bytes)
+		key, err := jwt.ParseRSAPublicKeyFromPEM([]byte(pub.Pem))
 		if err != nil {
-			return fmt.Errorf("ParsePKIXPublicKey() failed: %v", err)
-		}
-
-		publicKey, ok := parsed.(*rsa.PublicKey)
-		if !ok {
-			return fmt.Errorf("Public key is not rsa public key")
+			return fmt.Errorf("parse RSA public key failed %v", err)
 		}
 
 		s.publicKeys.Keys = append(s.publicKeys.Keys, jose.JSONWebKey{
 			KeyID:     id,
-			Key:       publicKey,
+			Key:       key,
 			Algorithm: "RS256",
 			Use:       "sig",
 		})

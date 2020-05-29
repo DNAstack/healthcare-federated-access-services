@@ -16,7 +16,6 @@ package httputils
 
 import (
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/google/go-cmp/cmp" /* copybara-comment */
@@ -26,19 +25,17 @@ import (
 func TestNewPageHandler(t *testing.T) {
 	w := NewFakeWriter()
 	page := "some HTML page"
-	csp := CSPFromString("a b")
 
-	h := NewPageHandler(page, csp)
+	h := NewPageHandler(page)
 	h(w, &http.Request{})
 
 	got := w
 	want := &FakeWriter{
 		Headers: http.Header{
-			"Content-Security-Policy": {
-				"a b;default-src 'self';font-src https://fonts.gstatic.com;frame-ancestors 'self';img-src 'self' data: http://icon-library.com;script-src 'self' https://ajax.googleapis.com https://code.getmdl.io;style-src 'self' https://code.getmdl.io https://fonts.googleapis.com",
-			},
-			"X-Frame-Options": {"SAMEORIGIN"},
-			"Content-Type":    {"text/html"},
+			"Access-Control-Allow-Headers": {"Content-Type, Origin, Accept, Authorization, X-Link-Authorization"},
+			"Access-Control-Allow-Methods": {"GET,POST,PUT,PATCH,DELETE,OPTIONS"},
+			"Access-Control-Allow-Origin":  {"*"},
+			"Content-Type":                 {"text/html"},
 		},
 		Body: page,
 		Code: 0,
@@ -49,12 +46,21 @@ func TestNewPageHandler(t *testing.T) {
 }
 
 func Test_LivenessCheckHandler(t *testing.T) {
-	w := httptest.NewRecorder()
+	w := NewFakeWriter()
 	LivenessCheckHandler(w, &http.Request{})
 
-	got := w.Result().StatusCode
-
-	if got != http.StatusOK {
-		t.Errorf("status = %d wants %d", got, http.StatusOK)
+	got := w
+	want := &FakeWriter{
+		Headers: http.Header{
+			"Access-Control-Allow-Headers": {"Content-Type, Origin, Accept, Authorization, X-Link-Authorization"},
+			"Access-Control-Allow-Methods": {"GET,POST,PUT,PATCH,DELETE,OPTIONS"},
+			"Access-Control-Allow-Origin":  {"*"},
+			"Content-Type":                 {"text/html"},
+		},
+		Body: livenessPage,
+		Code: 0,
+	}
+	if diff := cmp.Diff(want, got, protocmp.Transform()); diff != "" {
+		t.Errorf("LivenessCheckHandler() returned diff (-want +got):\n%s", diff)
 	}
 }

@@ -148,22 +148,3 @@ pre {
   cursor: pointer;
   color: darkblue;
 }
-
-.width1-4 {
-  width: 24%;
-}
-.half-width {
-  width: 49%;
-}
-.full-width {
-  width: 98%;
-}
-.width-40 {
-  width: 40%;
-}
-.width-100px {
-  width: 100px;
-}
-.float-left {
-  float: left;
-}

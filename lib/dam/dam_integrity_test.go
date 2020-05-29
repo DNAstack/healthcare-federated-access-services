@@ -21,8 +21,6 @@ import (
 	"github.com/golang/protobuf/proto" /* copybara-comment */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/dam" /* copybara-comment: dam */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage" /* copybara-comment: storage */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/test/fakeoidcissuer" /* copybara-comment: fakeoidcissuer */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/testkeys" /* copybara-comment: testkeys */
 
 	glog "github.com/golang/glog" /* copybara-comment */
 	cpb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/common/v1" /* copybara-comment: go_proto */
@@ -31,7 +29,7 @@ import (
 
 const (
 	hydraAdminURL    = "https://admin.hydra.example.com"
-	hydraURL         = "https://example.com/"
+	hydraURL         = "https://example.com/oidc"
 	hydraURLInternal = "https://hydra.internal.example.com/"
 	useHydra         = true
 )
@@ -133,10 +131,6 @@ func setupFromFile(t *testing.T) (*dam.Service, *pb.DamConfig) {
 	if err := store.Read(storage.ConfigDatatype, storage.DefaultRealm, storage.DefaultUser, storage.DefaultID, storage.LatestRev, cfg); err != nil {
 		t.Fatalf("error reading config: %v", err)
 	}
-	server, err := fakeoidcissuer.New(hydraURL, &testkeys.PersonaBrokerKey, "dam", "testdata/config", false)
-	if err != nil {
-		t.Fatalf("fakeoidcissuer.New(%q, _, _) failed: %v", hydraURL, err)
-	}
 
 	for k, v := range dam.BuiltinPolicies {
 		p := &pb.Policy{}
@@ -145,7 +139,6 @@ func setupFromFile(t *testing.T) (*dam.Service, *pb.DamConfig) {
 	}
 
 	opts := &dam.Options{
-		HTTPClient:     server.Client(),
 		Domain:         "test.org",
 		ServiceName:    "dam",
 		DefaultBroker:  "no-broker",

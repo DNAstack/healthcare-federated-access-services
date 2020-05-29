@@ -18,7 +18,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/kms/localsign" /* copybara-comment: localsign */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/testkeys" /* copybara-comment: testkeys */
 )
 
@@ -53,9 +52,7 @@ func TestPolicyTest(t *testing.T) {
 
 	broker := testkeys.Keys[testkeys.PassportBroker0]
 	d := &AccessData{}
-
-	signer := localsign.New(&broker)
-	access, err := NewAccessFromData(ctx, d, signer)
+	access, err := NewAccessFromData(d, RS256, broker.Private, broker.ID)
 	if err != nil {
 		t.Fatalf("NewPassportFromData() failed: %v", err)
 	}
@@ -99,9 +96,7 @@ func TestPolicyTest_NotAllowed(t *testing.T) {
 
 	broker := testkeys.Keys[testkeys.PassportBroker0]
 	d := &AccessData{}
-
-	signer := localsign.New(&broker)
-	access, err := NewAccessFromData(ctx, d, signer)
+	access, err := NewAccessFromData(d, RS256, broker.Private, broker.ID)
 	if err != nil {
 		t.Fatalf("NewPassportFromData() failed: %v", err)
 	}
