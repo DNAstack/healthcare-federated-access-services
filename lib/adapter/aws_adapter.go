@@ -36,8 +36,9 @@ func NewAwsAdapter(store storage.Store, warehouse clouds.ResourceTokenCreator, s
 		return nil, fmt.Errorf("reading %q service descriptors from path %q: %v", aggregatorName, path, err)
 	}
 	ctx := context.Background()
-	awsClient := &aws.SdkApiClient{
-
+	awsClient, err := aws.NewApiClient()
+	if err != nil {
+		return nil, err
 	}
 
 	wh, err := aws.NewWarehouse(ctx, store, awsClient)

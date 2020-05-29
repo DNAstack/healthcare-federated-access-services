@@ -229,6 +229,48 @@ func (m *MockAwsClient) CreateRole(input *iam.CreateRoleInput) (*iam.CreateRoleO
 }
 // end Mock AWS Client
 
+func NewMockBucketParams(ttl time.Duration) *ResourceParams {
+	return &ResourceParams{
+		UserId:                "ic_abc123|fake-ic",
+		Ttl:                   ttl,
+		MaxKeyTtl:             (24 * 30) * time.Hour,
+		ManagedKeysPerAccount: 2,
+		Vars:                  map[string]string{"bucket": "test-bucket-name"},
+		TargetRoles:           []string{"s3:GetObject"},
+		TargetScopes:          []string{},
+		DamResourceId:         "res-id",
+		DamViewId:             "view-id",
+		DamRoleId:             "role-id",
+		ServiceTemplate:       &v1.ServiceTemplate{ServiceName: "s3bucket"},
+	}
+}
+
+func NewMockRedshiftParams(ttl time.Duration) *ResourceParams {
+	vars := map[string]string{
+		"cluster": "arn:aws:redshift:us-east-1:12345678:cluster:test-cluster",
+		"group": "arn:aws:redshift:us-east-1:12345678:dbgroup:test-cluster/admin",
+	}
+	roles := []string{
+		"redshift:GetClusterCredentials",
+		"redshift:CreateClusterUser",
+		"redshift:JoinGroup",
+	}
+
+	return &ResourceParams{
+		UserId:                "ic_abc123|fake-ic",
+		Ttl:                   ttl,
+		MaxKeyTtl:             (24 * 30) * time.Hour,
+		ManagedKeysPerAccount: 2,
+		Vars:                  vars,
+		TargetRoles:           roles,
+		TargetScopes:          []string{},
+		DamResourceId:         "res-id",
+		DamViewId:             "view-id",
+		DamRoleId:             "role-id",
+		ServiceTemplate:       &v1.ServiceTemplate{ServiceName: "redshift"},
+	}
+}
+
 func TestNewAwsWarehouse(t *testing.T) {
 	store := fakestore.New()
 	apiClient := NewMockApiClient("12345678", "dam-user-id")
@@ -248,27 +290,7 @@ func TestAWS_MintTokenWithShortLivedTTL_Bucket(t *testing.T) {
 	awsAccount := "12345678"
 	apiClient := NewMockApiClient(awsAccount, damPrincipalId)
 	wh, _ := NewWarehouse(context.Background(), store, apiClient)
-
-	vars := map[string]string{
-		"bucket": "test-bucket-name",
-	}
-	serviceTemplate := &v1.ServiceTemplate{
-		ServiceName: "s3bucket",
-	}
-
-	params := &ResourceParams{
-		UserId:                "ic_abc123|fake-ic",
-		Ttl:                   time.Hour,
-		MaxKeyTtl:             (24 * 30) * time.Hour,
-		ManagedKeysPerAccount: 2,
-		Vars:                  vars,
-		TargetRoles:           []string{"s3:GetObject"},
-		TargetScopes:          []string{},
-		DamResourceId:         "res-id",
-		DamViewId:             "view-id",
-		DamRoleId:             "role-id",
-		ServiceTemplate:       serviceTemplate,
-	}
+	params := NewMockBucketParams(time.Hour)
 
 	result, err := wh.MintTokenWithTTL(context.Background(), params)
 
@@ -284,33 +306,7 @@ func TestAWS_MintTokenWithShortLivedTTL_Redshift(t *testing.T) {
 	damPrincipalId := "dam-user-id"
 	apiClient := NewMockApiClient(awsAccount, damPrincipalId)
 	wh, _ := NewWarehouse(context.Background(), store, apiClient)
-
-	vars := map[string]string{
-		"cluster": "arn:aws:redshift:us-east-1:12345678:cluster:test-cluster",
-		"group": "arn:aws:redshift:us-east-1:12345678:dbgroup:test-cluster/admin",
-	}
-	serviceTemplate := &v1.ServiceTemplate{
-		ServiceName: "redshift",
-	}
-	roles := []string{
-		"redshift:GetClusterCredentials",
-		"redshift:CreateClusterUser",
-		"redshift:JoinGroup",
-	}
-
-	params := &ResourceParams{
-		UserId:                "ic_abc123|fake-ic",
-		Ttl:                   time.Hour,
-		MaxKeyTtl:             (24 * 30) * time.Hour,
-		ManagedKeysPerAccount: 2,
-		Vars:                  vars,
-		TargetRoles:           roles,
-		TargetScopes:          []string{},
-		DamResourceId:         "res-id",
-		DamViewId:             "view-id",
-		DamRoleId:             "role-id",
-		ServiceTemplate:       serviceTemplate,
-	}
+	params := NewMockRedshiftParams(time.Hour)
 
 	result, err := wh.MintTokenWithTTL(context.Background(), params)
 
@@ -326,27 +322,8 @@ func TestAWS_MintTokenWithLongLivedTTL_Bucket(t *testing.T) {
 	damPrincipalId := "dam-user-id"
 	apiClient := NewMockApiClient(awsAccount, damPrincipalId)
 	wh, _ := NewWarehouse(context.Background(), store, apiClient)
-
-	vars := map[string]string{
-		"bucket": "test-bucket-name",
-	}
-	serviceTemplate := &v1.ServiceTemplate{
-		ServiceName: "s3bucket",
-	}
-
-	params := &ResourceParams{
-		UserId:                "ic_abc123|fake-ic",
-		Ttl:                   13 * time.Hour, // AWS has 12-hour threshold for role access tokens
-		MaxKeyTtl:             (24 * 30) * time.Hour,
-		ManagedKeysPerAccount: 2,
-		Vars:                  vars,
-		TargetRoles:           []string{"s3:GetObject"},
-		TargetScopes:          []string{},
-		DamResourceId:         "res-id",
-		DamViewId:             "view-id",
-		DamRoleId:             "role-id",
-		ServiceTemplate:       serviceTemplate,
-	}
+	// AWS has 12-hour threshold for role access tokens
+	params := NewMockBucketParams(13 * time.Hour)
 
 	result, err := wh.MintTokenWithTTL(context.Background(), params)
 
@@ -362,33 +339,8 @@ func TestAWS_MintTokenWithLongLivedTTL_Redshift(t *testing.T) {
 	damPrincipalId := "dam-user-id"
 	apiClient := NewMockApiClient(awsAccount, damPrincipalId)
 	wh, _ := NewWarehouse(context.Background(), store, apiClient)
-
-	vars := map[string]string{
-		"cluster": "arn:aws:redshift:us-east-1:12345678:cluster:test-cluster",
-		"group": "arn:aws:redshift:us-east-1:12345678:dbgroup:test-cluster/admin",
-	}
-	serviceTemplate := &v1.ServiceTemplate{
-		ServiceName: "redshift",
-	}
-	roles := []string{
-		"redshift:GetClusterCredentials",
-		"redshift:CreateClusterUser",
-		"redshift:JoinGroup",
-	}
-
-	params := &ResourceParams{
-		UserId:                "ic_abc123|fake-ic",
-		Ttl:                   13 * time.Hour, // AWS has 12-hour threshold for role access tokens
-		MaxKeyTtl:             (24 * 30) * time.Hour,
-		ManagedKeysPerAccount: 2,
-		Vars:                  vars,
-		TargetRoles:           roles,
-		TargetScopes:          []string{},
-		DamResourceId:         "res-id",
-		DamViewId:             "view-id",
-		DamRoleId:             "role-id",
-		ServiceTemplate:       serviceTemplate,
-	}
+	// AWS has 12-hour threshold for role access tokens
+	params := NewMockRedshiftParams(13 * time.Hour)
 
 	result, err := wh.MintTokenWithTTL(context.Background(), params)
 
@@ -446,13 +398,13 @@ func validateMintedAccessKey(t *testing.T, expectedAccount string, result *cloud
 	}
 }
 
-func validateCreatedRolePolicy(t *testing.T, apiClient *MockAwsClient, expectedAccount string, targetRoles []string) {
+func validateCreatedRolePolicy(t *testing.T, apiClient *MockAwsClient, expectedRoleName string, targetRoles []string) {
 	if len(apiClient.Roles) != 1 {
 		t.Errorf("expected a single role to be created but found %v", apiClient.Roles)
 	} else {
 		role := apiClient.Roles[0]
-		if *role.RoleName != expectedAccount {
-			t.Errorf("expected created role name to be [%s] but was [%s]", expectedAccount, *role.RoleName)
+		if *role.RoleName != expectedRoleName {
+			t.Errorf("expected created role name to be [%s] but was [%s]", expectedRoleName, *role.RoleName)
 		}
 	}
 
@@ -460,9 +412,9 @@ func validateCreatedRolePolicy(t *testing.T, apiClient *MockAwsClient, expectedA
 		t.Errorf("expected a single role policy to be created but found %v", apiClient.RolePolicies)
 	} else {
 		policy := apiClient.RolePolicies[0]
-		if *policy.RoleName != expectedAccount {
+		if *policy.RoleName != expectedRoleName {
 			t.Errorf("expected policy to be created for role [%s] but was created for role [%s]",
-				expectedAccount,
+				expectedRoleName,
 				*policy.RoleName)
 		}
 		for _, targetRole := range targetRoles {
@@ -475,13 +427,13 @@ func validateCreatedRolePolicy(t *testing.T, apiClient *MockAwsClient, expectedA
 	}
 }
 
-func validateCreatedUserPolicy(t *testing.T, apiClient *MockAwsClient, expectedAccount string, targetRoles []string) {
+func validateCreatedUserPolicy(t *testing.T, apiClient *MockAwsClient, expectedUserName string, targetRoles []string) {
 	if len(apiClient.Users) != 1 {
 		t.Errorf("expected a single user to be created but found %v", apiClient.Users)
 	} else {
 		user := apiClient.Users[0]
-		if *user.UserName != expectedAccount {
-			t.Errorf("expected created user name to be [%s] but was [%s]", expectedAccount, *user.UserName)
+		if *user.UserName != expectedUserName {
+			t.Errorf("expected created user name to be [%s] but was [%s]", expectedUserName, *user.UserName)
 		}
 	}
 
@@ -489,9 +441,9 @@ func validateCreatedUserPolicy(t *testing.T, apiClient *MockAwsClient, expectedA
 		t.Errorf("expected a single user policy to be created but found %v", apiClient.UserPolicies)
 	} else {
 		policy := apiClient.UserPolicies[0]
-		if *policy.UserName != expectedAccount {
+		if *policy.UserName != expectedUserName {
 			t.Errorf("expected policy to be created for user [%s] but was created for user [%s]",
-				expectedAccount,
+				expectedUserName,
 				*policy.UserName)
 		}
 		for _, targetUser := range targetRoles {

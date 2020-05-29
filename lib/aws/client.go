@@ -9,132 +9,67 @@ import (
 )
 
 type SdkApiClient struct {
+	session *session.Session
+	iamSvc  *iam.IAM
+	stsSvc  *sts.STS
 }
 
-func(sac *SdkApiClient) createSession() (*session.Session, error) {
-	rootSess, err := session.NewSession(&aws.Config{})
+func NewApiClient() (*SdkApiClient, error) {
+	session, err := session.NewSession(&aws.Config{})
 	if err != nil {
 		return nil, fmt.Errorf("unable to create AWS root session: %v", err)
-	} else {
-		return rootSess, err
 	}
-}
-
-func(sac *SdkApiClient) createIamSvc() (*iam.IAM, error) {
-	sess, err := sac.createSession()
-	if err != nil {
-		return nil, fmt.Errorf("error creating AWS SDK session: %v", err)
-	}
-	return iam.New(sess), nil
-}
-
-func(sac *SdkApiClient) createStsSvc() (*sts.STS, error) {
-	sess, err := sac.createSession()
-	if err != nil {
-		return nil, fmt.Errorf("error creating AWS SDK session: %v", err)
-	}
-	return sts.New(sess), nil
+	return &SdkApiClient{
+		session: session,
+		iamSvc:  iam.New(session),
+		stsSvc:  sts.New(session),
+	}, nil
 }
 
 func (sac *SdkApiClient) ListUsers(input *iam.ListUsersInput) (*iam.ListUsersOutput, error) {
-	svc, err := sac.createIamSvc()
-	if err != nil {
-		return nil, err
-	}
-	accounts, err := svc.ListUsers(input)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list users with AWS sdk: %v", err)
-	}
-
-	return accounts, nil
+	return sac.iamSvc.ListUsers(input)
 }
 
 func (sac *SdkApiClient) ListAccessKeys(input *iam.ListAccessKeysInput) (*iam.ListAccessKeysOutput, error) {
-	svc, err := sac.createIamSvc()
-	if err != nil {
-		return nil, err
-	}
-	return svc.ListAccessKeys(input)
+	return sac.iamSvc.ListAccessKeys(input)
 }
 
 func (sac *SdkApiClient) DeleteAccessKey(input *iam.DeleteAccessKeyInput) (*iam.DeleteAccessKeyOutput, error) {
-	svc, err := sac.createIamSvc()
-	if err != nil {
-		return nil, err
-	}
-	return svc.DeleteAccessKey(input)
+	return sac.iamSvc.DeleteAccessKey(input)
 }
 
 func (sac *SdkApiClient) GetCallerIdentity(input *sts.GetCallerIdentityInput) (*sts.GetCallerIdentityOutput, error) {
-	svc, err := sac.createStsSvc()
-	if err != nil {
-		return nil, err
-	}
-
-	return svc.GetCallerIdentity(input)
+	return sac.stsSvc.GetCallerIdentity(input)
 }
 
 func (sac *SdkApiClient) AssumeRole(input *sts.AssumeRoleInput) (*sts.AssumeRoleOutput, error) {
-	svc, err := sac.createStsSvc()
-	if err != nil {
-		return nil, err
-	}
-
-	return svc.AssumeRole(input)
+	return sac.stsSvc.AssumeRole(input)
 }
 
 func (sac *SdkApiClient) CreateAccessKey(input *iam.CreateAccessKeyInput) (*iam.CreateAccessKeyOutput, error) {
-	svc, err := sac.createIamSvc()
-	if err != nil {
-		return nil, err
-	}
-	return svc.CreateAccessKey(input)
+	return sac.iamSvc.CreateAccessKey(input)
 }
 
 func (sac *SdkApiClient) PutRolePolicy(input *iam.PutRolePolicyInput) (*iam.PutRolePolicyOutput, error) {
-	svc, err := sac.createIamSvc()
-	if err != nil {
-		return nil, err
-	}
-	return svc.PutRolePolicy(input)
+	return sac.iamSvc.PutRolePolicy(input)
 }
 
 func (sac *SdkApiClient) PutUserPolicy(input *iam.PutUserPolicyInput) (*iam.PutUserPolicyOutput, error) {
-	svc, err := sac.createIamSvc()
-	if err != nil {
-		return nil, err
-	}
-	return svc.PutUserPolicy(input)
+	return sac.iamSvc.PutUserPolicy(input)
 }
 
 func (sac *SdkApiClient) GetUser(input *iam.GetUserInput) (*iam.GetUserOutput, error) {
-	svc, err := sac.createIamSvc()
-	if err != nil {
-		return nil, err
-	}
-	return svc.GetUser(input)
+	return sac.iamSvc.GetUser(input)
 }
 
 func (sac *SdkApiClient) CreateUser(input *iam.CreateUserInput) (*iam.CreateUserOutput, error) {
-	svc, err := sac.createIamSvc()
-	if err != nil {
-		return nil, err
-	}
-	return svc.CreateUser(input)
+	return sac.iamSvc.CreateUser(input)
 }
 
 func (sac *SdkApiClient) GetRole(input *iam.GetRoleInput) (*iam.GetRoleOutput, error) {
-	svc, err := sac.createIamSvc()
-	if err != nil {
-		return nil, err
-	}
-	return svc.GetRole(input)
+	return sac.iamSvc.GetRole(input)
 }
 
 func (sac *SdkApiClient) CreateRole(input *iam.CreateRoleInput) (*iam.CreateRoleOutput, error) {
-	svc, err := sac.createIamSvc()
-	if err != nil {
-		return nil, err
-	}
-	return svc.CreateRole(input)
+	return sac.iamSvc.CreateRole(input)
 }
