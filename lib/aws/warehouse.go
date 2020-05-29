@@ -32,7 +32,6 @@ import (
 	"time"
 
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/clouds"
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage"
 )
 
 const (
@@ -90,15 +89,13 @@ type ApiClient interface {
 // AccountWarehouse is used to create AWS IAM Users and temporary credentials
 type AccountWarehouse struct {
 	svcUserArn string
-	store      storage.Store
 	apiClient  ApiClient
 }
 
 // NewWarehouse creates a new AccountWarehouse using the provided client
 // and options.
-func NewWarehouse(_ context.Context, store storage.Store, awsClient ApiClient) (*AccountWarehouse, error) {
+func NewWarehouse(_ context.Context, awsClient ApiClient) (*AccountWarehouse, error) {
 	wh := &AccountWarehouse{
-		store:     store,
 		apiClient: awsClient,
 	}
 	if gcio, err := awsClient.GetCallerIdentity(&sts.GetCallerIdentityInput{}); err != nil {

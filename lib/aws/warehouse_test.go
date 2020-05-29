@@ -27,8 +27,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/test/fakestore" /* copybara-comment: fakestore */
 )
 
 func NewMockApiClient(account string, userId string) *MockAwsClient {
@@ -272,9 +270,8 @@ func NewMockRedshiftParams(ttl time.Duration) *ResourceParams {
 }
 
 func TestNewAwsWarehouse(t *testing.T) {
-	store := fakestore.New()
 	apiClient := NewMockApiClient("12345678", "dam-user-id")
-	wh, err := NewWarehouse(context.Background(), store, apiClient)
+	wh, err := NewWarehouse(context.Background(), apiClient)
 
 	if err != nil {
 		t.Errorf("expected no error but observed: %v", err)
@@ -285,11 +282,10 @@ func TestNewAwsWarehouse(t *testing.T) {
 }
 
 func TestAWS_MintTokenWithShortLivedTTL_Bucket(t *testing.T) {
-	store := fakestore.New()
 	damPrincipalId := "dam-user-id"
 	awsAccount := "12345678"
 	apiClient := NewMockApiClient(awsAccount, damPrincipalId)
-	wh, _ := NewWarehouse(context.Background(), store, apiClient)
+	wh, _ := NewWarehouse(context.Background(), apiClient)
 	params := NewMockBucketParams(time.Hour)
 
 	result, err := wh.MintTokenWithTTL(context.Background(), params)
@@ -301,11 +297,10 @@ func TestAWS_MintTokenWithShortLivedTTL_Bucket(t *testing.T) {
 }
 
 func TestAWS_MintTokenWithShortLivedTTL_Redshift(t *testing.T) {
-	store := fakestore.New()
 	awsAccount := "12345678"
 	damPrincipalId := "dam-user-id"
 	apiClient := NewMockApiClient(awsAccount, damPrincipalId)
-	wh, _ := NewWarehouse(context.Background(), store, apiClient)
+	wh, _ := NewWarehouse(context.Background(), apiClient)
 	params := NewMockRedshiftParams(time.Hour)
 
 	result, err := wh.MintTokenWithTTL(context.Background(), params)
@@ -317,11 +312,10 @@ func TestAWS_MintTokenWithShortLivedTTL_Redshift(t *testing.T) {
 }
 
 func TestAWS_MintTokenWithLongLivedTTL_Bucket(t *testing.T) {
-	store := fakestore.New()
 	awsAccount := "12345678"
 	damPrincipalId := "dam-user-id"
 	apiClient := NewMockApiClient(awsAccount, damPrincipalId)
-	wh, _ := NewWarehouse(context.Background(), store, apiClient)
+	wh, _ := NewWarehouse(context.Background(), apiClient)
 	// AWS has 12-hour threshold for role access tokens
 	params := NewMockBucketParams(13 * time.Hour)
 
@@ -334,11 +328,10 @@ func TestAWS_MintTokenWithLongLivedTTL_Bucket(t *testing.T) {
 }
 
 func TestAWS_MintTokenWithLongLivedTTL_Redshift(t *testing.T) {
-	store := fakestore.New()
 	awsAccount := "12345678"
 	damPrincipalId := "dam-user-id"
 	apiClient := NewMockApiClient(awsAccount, damPrincipalId)
-	wh, _ := NewWarehouse(context.Background(), store, apiClient)
+	wh, _ := NewWarehouse(context.Background(), apiClient)
 	// AWS has 12-hour threshold for role access tokens
 	params := NewMockRedshiftParams(13 * time.Hour)
 

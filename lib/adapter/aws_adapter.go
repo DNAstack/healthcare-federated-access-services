@@ -42,7 +42,7 @@ func NewAwsAdapter(store storage.Store, _ clouds.ResourceTokenCreator, _ *pb.Dam
 		return nil, err
 	}
 
-	wh, err := aws.NewWarehouse(ctx, store, awsClient)
+	wh, err := aws.NewWarehouse(ctx, awsClient)
 	if err != nil {
 		return nil, fmt.Errorf("error creating AWS key warehouse: %v", err)
 	}
