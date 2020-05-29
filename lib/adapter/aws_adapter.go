@@ -6,6 +6,7 @@ import (
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/aws"
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/clouds"
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh" /* copybara-comment: ga4gh */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/processgc"
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/srcutil"
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage"
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/timeutil" /* copybara-comment: timeutil */
@@ -29,7 +30,7 @@ type AwsAdapter struct {
 	warehouse *aws.AccountWarehouse
 }
 
-func NewAwsAdapter(store storage.Store, warehouse clouds.ResourceTokenCreator, secrets *pb.DamSecrets, adapters *ServiceAdapters) (ServiceAdapter, error) {
+func NewAwsAdapter(store storage.Store, _ clouds.ResourceTokenCreator, _ *pb.DamSecrets, _ *ServiceAdapters) (ServiceAdapter, error) {
 	var msg pb.ServicesResponse
 	path := adapterFilePath(AwsAdapterName)
 	if err := srcutil.LoadProto(path, &msg); err != nil {
@@ -46,17 +47,21 @@ func NewAwsAdapter(store storage.Store, warehouse clouds.ResourceTokenCreator, s
 		return nil, fmt.Errorf("error creating AWS key warehouse: %v", err)
 	}
 
+	keyGC := processgc.NewKeyGC("aws_key_gc", wh, store, defaultGcFrequency, defaultKeysPerAccount, func(account *clouds.Account) bool {
+		return true
+	})
 	//Register Accounts
-	if err := aws.RegisterAccountGC(store, wh); err != nil {
+	if err := RegisterAccountGC(store, keyGC, wh); err != nil {
 		return nil, fmt.Errorf("error registering AWS account key GC: %v", err)
 	}
 
 	// QUESTION: Is this the right place
 	// Update Settings
 	ttl := defaultGcFrequency
-	if err := wh.UpdateSettings(ttl, defaultKeysPerAccount, nil); err != nil {
+	if err := keyGC.UpdateSettings(ttl, defaultKeysPerAccount, nil); err != nil {
 		return nil, fmt.Errorf("error updating settings: %v", err)
 	}
+	go keyGC.Run(ctx)
 
 	return &AwsAdapter{
 		desc: msg.Services,
@@ -80,7 +85,7 @@ func (a *AwsAdapter) IsAggregator() bool {
 	return false
 }
 
-func (a *AwsAdapter) CheckConfig(templateName string, template *pb.ServiceTemplate, resName, viewName string, view *pb.View, cfg *pb.DamConfig, adapters *ServiceAdapters) (string, error) {
+func (a *AwsAdapter) CheckConfig(_ string, _ *pb.ServiceTemplate, _, _ string, _ *pb.View, _ *pb.DamConfig, _ *ServiceAdapters) (string, error) {
 	return "", nil
 }
 
@@ -146,4 +151,15 @@ func createAwsResourceTokenCreationParams(userID string, input *Action) (*aws.Re
 		DamRoleId:             input.GrantRole,
 		ServiceTemplate:       input.ServiceTemplate,
 	}, nil
+}
+
+func RegisterAccountGC(store storage.Store, keyGC *processgc.KeyGC, wh *aws.AccountWarehouse) error {
+	// IMPORTANT this transaction is closed in `process.go`
+	// FIXME, maybe move this transaction creation closer to where it is used/closed?
+	tx, err := store.Tx(true)
+	if err != nil {
+		return err
+	}
+	_, err = keyGC.RegisterWork(wh.GetAwsAccount(), nil, tx)
+	return err
 }

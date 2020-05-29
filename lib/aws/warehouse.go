@@ -19,7 +19,6 @@ package aws
 import (
 	"context"
 	"fmt"
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/processgc"
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/timeutil"
 	v1 "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/dam/v1"
 	"github.com/aws/aws-sdk-go/aws"
@@ -60,9 +59,6 @@ const (
 	backoffMultiplier          = 1.5
 	backoffMaxInterval         = 3 * time.Second
 	backoffMaxElapsedTime      = 10 * time.Second
-	//FIXME need to be moved to config, also the values
-	defaultGcFrequency = 1 * 24 * time.Hour
-	defaultKeysPerAccount = 2
 )
 
 var (
@@ -95,16 +91,14 @@ type ApiClient interface {
 type AccountWarehouse struct {
 	svcUserArn string
 	store      storage.Store
-	keyGC      *processgc.KeyGC
 	apiClient  ApiClient
 }
 
 // NewWarehouse creates a new AccountWarehouse using the provided client
 // and options.
-func NewWarehouse(ctx context.Context, store storage.Store, awsClient ApiClient) (*AccountWarehouse, error) {
+func NewWarehouse(_ context.Context, store storage.Store, awsClient ApiClient) (*AccountWarehouse, error) {
 	wh := &AccountWarehouse{
 		store:     store,
-		keyGC:     nil,
 		apiClient: awsClient,
 	}
 	if gcio, err := awsClient.GetCallerIdentity(&sts.GetCallerIdentityInput{}); err != nil {
@@ -113,14 +107,14 @@ func NewWarehouse(ctx context.Context, store storage.Store, awsClient ApiClient)
 		wh.svcUserArn = *gcio.Arn
 	}
 
-	wh.keyGC = processgc.NewKeyGC("aws_key_gc", wh, store, defaultGcFrequency, defaultKeysPerAccount, func(account *clouds.Account) bool {
-		return true
-	})
-	go wh.Run(ctx)
 	return wh, nil
 }
 
-func (wh *AccountWarehouse) GetServiceAccounts(ctx context.Context, project string) (<-chan *clouds.Account, error) {
+func (wh *AccountWarehouse) GetAwsAccount() string {
+	return extractAccount(wh.svcUserArn)
+}
+
+func (wh *AccountWarehouse) GetServiceAccounts(ctx context.Context, _ string) (<-chan *clouds.Account, error) {
 	c := make(chan *clouds.Account)
 	go func() {
 		defer close(c)
@@ -156,7 +150,7 @@ func (wh *AccountWarehouse) GetServiceAccounts(ctx context.Context, project stri
 	return c, nil
 }
 
-func (wh *AccountWarehouse) RemoveServiceAccount(ctx context.Context, project, accountID string) error {
+func (wh *AccountWarehouse) RemoveServiceAccount(_ context.Context, _, _ string) error {
 	// TODO
 	// Unlike the AWS Management Console, when
 	//       you delete a user programmatically, you must delete the items  attached
@@ -168,7 +162,7 @@ func (wh *AccountWarehouse) RemoveServiceAccount(ctx context.Context, project, a
 }
 
 //This method is the main method where key removal happens
-func (wh *AccountWarehouse) ManageAccountKeys(ctx context.Context, project, accountID string, ttl, maxKeyTTL time.Duration, now time.Time, keysPerAccount int64) (int, int, error) {
+func (wh *AccountWarehouse) ManageAccountKeys(_ context.Context, _, accountID string, _, maxKeyTTL time.Duration, now time.Time, keysPerAccount int64) (int, int, error) {
 	expired := now.Add(-1 * maxKeyTTL).Format(time.RFC3339)
 	accessKeys, err := wh.apiClient.ListAccessKeys(&iam.ListAccessKeysInput{
 		UserName: aws.String(accountID),
@@ -301,16 +295,6 @@ func extractDBGroupName(arn string) string {
 	pathParts := strings.Split(arnParts[6], "/")
 
 	return pathParts[len(pathParts)-1]
-}
-
-func RegisterAccountGC(store storage.Store, wh *AccountWarehouse) error {
-	// IMPORTANT this transaction is closed in `process.go`
-	// FIXME, maybe move this transaction creation closer to where it is used/closed?
-	tx, err := store.Tx(true)
-	if err != nil {
-		return err
-	}
-	return wh.RegisterAccountProject(extractAccount(wh.svcUserArn), tx)
 }
 
 // MintTokenWithTTL returns an AccountKey or an AccessToken depending on the TTL requested.
