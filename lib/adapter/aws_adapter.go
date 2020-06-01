@@ -6,6 +6,7 @@ import (
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/aws"
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/clouds"
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh" /* copybara-comment: ga4gh */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/kms"
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/processgc"
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/srcutil"
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage"
@@ -30,7 +31,7 @@ type AwsAdapter struct {
 	warehouse *aws.AccountWarehouse
 }
 
-func NewAwsAdapter(store storage.Store, _ clouds.ResourceTokenCreator, _ *pb.DamSecrets, _ *ServiceAdapters) (ServiceAdapter, error) {
+func NewAwsAdapter(store storage.Store, _ clouds.ResourceTokenCreator, _ kms.Signer, _ *ServiceAdapters) (ServiceAdapter, error) {
 	var msg pb.ServicesResponse
 	path := adapterFilePath(AwsAdapterName)
 	if err := srcutil.LoadProto(path, &msg); err != nil {
