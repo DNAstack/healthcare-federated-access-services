@@ -346,6 +346,11 @@ func (wh *AccountWarehouse) determineResourceSpecs(params *ResourceParams) ([]*r
 				arn:   fmt.Sprintf("arn:aws:s3:::%s/*", bucket),
 				rType: bucketType,
 			},
+			{
+				id:    bucket,
+				arn:   fmt.Sprintf("arn:aws:s3:::%s", bucket),
+				rType: bucketType,
+			},
 		}, nil
 	case RedshiftItemFormat:
 		clusterArn, ok := params.Vars["cluster"]
