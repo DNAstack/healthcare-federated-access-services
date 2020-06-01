@@ -15,16 +15,17 @@
 package ga4gh
 
 import (
-	"crypto/rsa"
+	"context"
 	"fmt"
 
+	"gopkg.in/square/go-jose.v2/jwt" /* copybara-comment */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/kms" /* copybara-comment: kms */
+
 	glog "github.com/golang/glog" /* copybara-comment */
-	"github.com/dgrijalva/jwt-go" /* copybara-comment */
 )
 
 const (
-	jwtHeaderKeyID = "kid"
-	jwtHeaderJKU   = "jku"
+	jwtHeaderJKU = "jku"
 )
 
 // Passport represents a GA4GH Passport.
@@ -83,9 +84,9 @@ func NewAccessFromJWT(j AccessJWT) (*Access, error) {
 // Visit the issuer's JWKS endpoint to obtain the keys and find the public key corresponding to the keyID.
 // To find the issuer's JWKS endpoint, visit "[issuer]/.well-known/openid-configuration"
 // "jku" in JWT header is not allowed for Access.
-func NewAccessFromData(d *AccessData, method SigningMethod, key *rsa.PrivateKey, keyID string) (*Access, error) {
+func NewAccessFromData(ctx context.Context, d *AccessData, signer kms.Signer) (*Access, error) {
 	glog.V(1).Info("NewAccessFromData()")
-	j, err := accessJWTFromData(d, method, key, keyID)
+	j, err := accessJWTFromData(ctx, d, signer)
 	if err != nil {
 		return nil, err
 	}
@@ -93,13 +94,6 @@ func NewAccessFromData(d *AccessData, method SigningMethod, key *rsa.PrivateKey,
 		jwt:  j,
 		data: d,
 	}, nil
-}
-
-// Verify verifies the signature of the Access using the provided public key.
-func (p *Access) Verify(key *rsa.PublicKey) error {
-	f := func(token *jwt.Token) (interface{}, error) { return key, nil }
-	_, err := jwt.Parse(string(p.jwt), f)
-	return err
 }
 
 // JWT returns the JWT of a Access.
@@ -124,15 +118,15 @@ type accessDataVisaJWT struct {
 	Identities map[string][]string `json:"identities,omitempty"`
 }
 
-func accessJWTFromData(d *AccessData, method SigningMethod, key *rsa.PrivateKey, keyID string) (AccessJWT, error) {
-	t := jwt.NewWithClaims(method, toAccessDataWithVisaJWT(d))
-	t.Header[jwtHeaderKeyID] = keyID
-	signed, err := t.SignedString(key)
+func accessJWTFromData(ctx context.Context, d *AccessData, signer kms.Signer) (AccessJWT, error) {
+	signed, err := signer.SignJWT(ctx, d, nil)
+
 	if err != nil {
-		err = fmt.Errorf("SignedString() failed: %v", err)
+		err = fmt.Errorf("SignJWT() failed: %v", err)
 		glog.V(1).Info(err)
 		return "", err
 	}
+
 	return AccessJWT(signed), nil
 }
 
@@ -147,11 +141,16 @@ func toAccessDataWithVisaJWT(d *AccessData) *accessDataVisaJWT {
 
 func accessDataFromJWT(j AccessJWT) (*AccessData, error) {
 	m := &accessDataVisaJWT{}
-	if _, _, err := (&jwt.Parser{}).ParseUnverified(string(j), m); err != nil {
-		err = fmt.Errorf("ParseUnverified(%v) failed: %v", j, err)
-		glog.V(1).Info(err)
-		return nil, err
+
+	tok, err := jwt.ParseSigned(string(j))
+	if err != nil {
+		return nil, fmt.Errorf("ParseSigned() failed: %v", err)
 	}
+
+	if err := tok.UnsafeClaimsWithoutVerification(m); err != nil {
+		return nil, fmt.Errorf("UnsafeClaimsWithoutVerification() failed: %v", err)
+	}
+
 	d, err := toAccessData(m)
 	if err != nil {
 		return nil, err

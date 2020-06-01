@@ -16,6 +16,7 @@ package ic
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -39,6 +40,7 @@ import (
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh" /* copybara-comment: ga4gh */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/hydra" /* copybara-comment: hydra */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/kms/fakeencryption" /* copybara-comment: fakeencryption */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/kms/localsign" /* copybara-comment: localsign */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/persona" /* copybara-comment: persona */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage" /* copybara-comment: storage */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/test/fakehydra" /* copybara-comment: fakehydra */
@@ -93,6 +95,8 @@ func TestHandlers(t *testing.T) {
 		t.Fatalf("fakeoidcissuer.New(%q, _, _) failed: %v", hydraURL, err)
 	}
 	crypt := fakeencryption.New()
+	key := testkeys.Default
+	signer := localsign.New(&key)
 
 	opts := &Options{
 		HTTPClient:     server.Client(),
@@ -101,6 +105,7 @@ func TestHandlers(t *testing.T) {
 		AccountDomain:  domain,
 		Store:          store,
 		Encryption:     crypt,
+		Signer:         signer,
 		UseHydra:       useHydra,
 		HydraAdminURL:  hydraAdminURL,
 		HydraPublicURL: hydraURL,
@@ -120,7 +125,7 @@ func TestHandlers(t *testing.T) {
 			Method:  "GET",
 			Path:    "/visas/jwks",
 			Persona: "non-admin",
-			Output:  `{"keys":[{"alg":"RS256","e":"AQAB","kid":"visa","kty":"RSA","n":"LS0tLS1CRUdJTiBSU0EgUFVCTElDIEtFWS0tLS0tCk1JSUJDZ0tDQVFFQW9mbUJaMnorVy8yM1ZIeGk3TGZiaWh4T0duckRYbXAwQzY3bHJ4L1JlVGJxckhXdTQvS3pWSjU5SmhJZ2daaW51ajRRWGs1WldDZVhmN1FuOE9Fcyt4VWxvU3VmWDgvNStRb0tOaTNzQnhvT3hBdlBQZHVsODdkTDVmVm9yK25QcThiNHZSZHRoRE1sSS9ubVVqODFROHBKeUdkYnFYa1JoMXhGQ3ZMRU9ZTjBmWC93bkw0aFgrMXk3M0VRSEZnUnRuOG9EVWF6aTJxTXpENHNlY1VSZ3Q3bWNEdGQ1aWF1ckpONnMrL1NqMU5NNnBUczZnWnlnRitYdit4dStEM1FQVktXdVBGSVJ3S3BOWXlWenRrRGtzN1c2TjhYNjRFa1JhWkFvQStmTTNISm9sKy9yd0VKOXYwK1h0MTdzcW1aaDJJQ09CcUJWckk2N1RxcXFTYWZnUUlEQVFBQgotLS0tLUVORCBSU0EgUFVCTElDIEtFWS0tLS0t","use":"sig","x5c":null}]}`,
+			Output:  `{"keys":[{"use":"sig","kty":"RSA","kid":"testkeys-unknown","alg":"RS256","n":"U-Zmsn1SnacEYi5eXrBNT7hGxRunPSdGE-IWTe94Ch8n1hktdtQglKJ_JSvyyEzUm2V3xkwwDarNe8JXnMFWpHbY167PCrQ7tvpiKbg3hptQunubqD8NSkSy-wOMze0jvDpWhPiQaNObYbRHnSiPNXPjzD2_EKUWn0Ff9WG_MWU","e":"AQAB"}]}`,
 			Status:  http.StatusOK,
 		},
 		{
@@ -901,13 +906,20 @@ func TestAddLinkedIdentities(t *testing.T) {
 		},
 	}
 
+	server, err := fakeoidcissuer.New(hydraURL, &testkeys.PersonaBrokerKey, "dam-min", "testdata/config", false)
+	if err != nil {
+		t.Fatalf("fakeoidcissuer.New(%q, _, _) failed: %v", hydraURL, err)
+	}
+
 	store := storage.NewMemoryStorage("ic-min", "testdata/config")
 	s := NewService(&Options{
+		HTTPClient:     server.Client(),
 		Domain:         domain,
 		ServiceName:    "ic",
 		AccountDomain:  domain,
 		Store:          store,
 		Encryption:     fakeencryption.New(),
+		Signer:         localsign.New(&testkeys.Default),
 		UseHydra:       useHydra,
 		HydraAdminURL:  hydraAdminURL,
 		HydraPublicURL: hydraURL,
@@ -920,7 +932,7 @@ func TestAddLinkedIdentities(t *testing.T) {
 		idp: &cpb.IdentityProvider{Issuer: idpIss},
 	}
 
-	err = s.addLinkedIdentities(id, link, testkeys.Default.Private, cfg)
+	err = s.addLinkedIdentities(context.Background(), id, link, cfg)
 	if err != nil {
 		t.Fatalf("s.addLinkedIdentities(_) failed: %v", err)
 	}
@@ -948,7 +960,6 @@ func TestAddLinkedIdentities(t *testing.T) {
 			IssuedAt:  got.IssuedAt,
 			ExpiresAt: got.ExpiresAt,
 		},
-		Scope: "openid",
 		Assertion: ga4gh.Assertion{
 			Type:     ga4gh.LinkedIdentities,
 			Asserted: got.Assertion.Asserted,
@@ -963,6 +974,11 @@ func TestAddLinkedIdentities(t *testing.T) {
 
 	if got.ExpiresAt-time.Now().Unix() > 3600 {
 		t.Errorf("got.ExpiresAt = now + %v seconds, want less than a hour", (got.ExpiresAt - time.Now().Unix()))
+	}
+
+	jku := "https://example.com/visas/jwks"
+	if v.JKU() != jku {
+		t.Errorf("v.JKU() = %s, wants %s", v.JKU(), jku)
 	}
 }
 

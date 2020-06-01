@@ -15,11 +15,13 @@
 package ga4gh
 
 import (
-	"crypto/rsa"
+	"context"
 	"fmt"
 
+	"gopkg.in/square/go-jose.v2/jwt" /* copybara-comment */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/kms" /* copybara-comment: kms */
+
 	glog "github.com/golang/glog" /* copybara-comment */
-	"github.com/dgrijalva/jwt-go" /* copybara-comment */
 	cpb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/common/v1" /* copybara-comment: go_proto */
 )
 
@@ -79,9 +81,8 @@ func NewVisaFromJWT(j VisaJWT) (*Visa, error) {
 //   Else if "jku" exists in JWT header, use the "jku" value.
 //   Otherwise, the Visa cannot be verified.
 // See https://bit.ly/ga4gh-aai-profile#embedded-token-issued-by-embedded-token-issuer
-func NewVisaFromData(d *VisaData, jku string, method SigningMethod, key *rsa.PrivateKey, keyID string) (*Visa, error) {
-	glog.V(1).Infof("NewVisaFromData(%+v,%T,%v)", d, method, key)
-	j, err := visaJWTFromData(d, jku, method, key, keyID)
+func NewVisaFromData(ctx context.Context, d *VisaData, jku string, signer kms.Signer) (*Visa, error) {
+	j, err := visaJWTFromData(ctx, d, jku, signer)
 	if err != nil {
 		return nil, err
 	}
@@ -90,13 +91,6 @@ func NewVisaFromData(d *VisaData, jku string, method SigningMethod, key *rsa.Pri
 		jku:  jku,
 		data: d,
 	}, nil
-}
-
-// Verify verifies the signature of the Visa using the given public key.
-func (v *Visa) Verify(key *rsa.PublicKey) error {
-	f := func(token *jwt.Token) (interface{}, error) { return key, nil }
-	_, err := jwt.Parse(string(v.jwt), f)
-	return err
 }
 
 // JKU returns the JKU header of a Visa.
@@ -129,13 +123,12 @@ func (v *Visa) Format() VisaFormat {
 	return DocumentVisaFormat
 }
 
-func visaJWTFromData(d *VisaData, jku string, method SigningMethod, key *rsa.PrivateKey, keyID string) (VisaJWT, error) {
-	t := jwt.NewWithClaims(method, d)
-	t.Header[jwtHeaderKeyID] = keyID
+func visaJWTFromData(ctx context.Context, d *VisaData, jku string, signer kms.Signer) (VisaJWT, error) {
+	header := map[string]string{}
 	if jku != JWTEmptyJKU {
-		t.Header[jwtHeaderJKU] = jku
+		header[jwtHeaderJKU] = jku
 	}
-	signed, err := t.SignedString(key)
+	signed, err := signer.SignJWT(ctx, d, header)
 	if err != nil {
 		return "", err
 	}
@@ -146,11 +139,25 @@ func visaJWTFromData(d *VisaData, jku string, method SigningMethod, key *rsa.Pri
 // Returns: visa payload data, the "jku" header string (if any), and error.
 func visaDataFromJWT(j VisaJWT) (*VisaData, string, error) {
 	d := &VisaData{}
-	tok, _, err := (&jwt.Parser{}).ParseUnverified(string(j), d)
+
+	tok, err := jwt.ParseSigned(string(j))
 	if err != nil {
-		return nil, "", err
+		return nil, JWTEmptyJKU, fmt.Errorf("ParseSigned() failed: %v", err)
 	}
-	jku, ok := tok.Header["jku"]
+
+	if err := tok.UnsafeClaimsWithoutVerification(d); err != nil {
+		return nil, JWTEmptyJKU, fmt.Errorf("UnsafeClaimsWithoutVerification() failed: %v", err)
+	}
+
+	if len(tok.Headers) != 1 {
+		return nil, JWTEmptyJKU, fmt.Errorf("jwt invalid header")
+	}
+
+	if len(tok.Headers[0].ExtraHeaders) == 0 {
+		return d, JWTEmptyJKU, nil
+	}
+
+	jku, ok := tok.Headers[0].ExtraHeaders["jku"]
 	if !ok {
 		return d, JWTEmptyJKU, nil
 	}

@@ -16,6 +16,7 @@ package ic
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"fmt"
 	"net/http"
@@ -33,8 +34,10 @@ import (
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/apis/hydraapi" /* copybara-comment: hydraapi */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh" /* copybara-comment: ga4gh */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/kms/fakeencryption" /* copybara-comment: fakeencryption */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/kms/localsign" /* copybara-comment: localsign */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage" /* copybara-comment: storage */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/test/fakehydra" /* copybara-comment: fakehydra */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/test/fakeoidcissuer" /* copybara-comment: fakeoidcissuer */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/testkeys" /* copybara-comment: testkeys */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/timeutil" /* copybara-comment: timeutil */
 
@@ -71,7 +74,10 @@ var (
 )
 
 func Test_toInformationReleasePageArgs(t *testing.T) {
-	v, err := ga4gh.NewVisaFromData(visa1, "", ga4gh.RS256, testkeys.Default.Private, testkeys.Default.ID)
+	ctx := context.Background()
+	key := testkeys.Default
+	signer := localsign.New(&key)
+	v, err := ga4gh.NewVisaFromData(ctx, visa1, "", signer)
 	if err != nil {
 		t.Fatalf("NewVisaFromData(_) failed: %v", err)
 	}
@@ -319,11 +325,14 @@ func ga4ghVisaToSelectedVisa(d *ga4gh.VisaData) *cspb.RememberedConsentPreferenc
 }
 
 func Test_scopedIdentity(t *testing.T) {
-	v1, err := ga4gh.NewVisaFromData(visa1, "", ga4gh.RS256, testkeys.Default.Private, testkeys.Default.ID)
+	signer := localsign.New(&testkeys.Default)
+	ctx := context.Background()
+
+	v1, err := ga4gh.NewVisaFromData(ctx, visa1, "", signer)
 	if err != nil {
 		t.Fatalf("NewVisaFromData(_) failed: %v", err)
 	}
-	v2, err := ga4gh.NewVisaFromData(visa2, "", ga4gh.RS256, testkeys.Default.Private, testkeys.Default.ID)
+	v2, err := ga4gh.NewVisaFromData(ctx, visa2, "", signer)
 	if err != nil {
 		t.Fatalf("NewVisaFromData(_) failed: %v", err)
 	}
@@ -1116,10 +1125,17 @@ func TestAcceptInformationRelease_Hydra_cleanupRememberedConsent(t *testing.T) {
 	}
 }
 
-func setupForFindRememberedConsentsByUser() *Service {
+func setupForFindRememberedConsentsByUser(t *testing.T) *Service {
+	t.Helper()
+
 	store := storage.NewMemoryStorage("ic-min", "testdata/config")
+	server, err := fakeoidcissuer.New(hydraURL, &testkeys.PersonaBrokerKey, "dam-min", "testdata/config", false)
+	if err != nil {
+		t.Fatalf("fakeoidcissuer.New(%q, _, _) failed: %v", hydraURL, err)
+	}
 
 	s := NewService(&Options{
+		HTTPClient:     server.Client(),
 		Domain:         domain,
 		ServiceName:    "ic",
 		AccountDomain:  domain,
@@ -1135,7 +1151,7 @@ func setupForFindRememberedConsentsByUser() *Service {
 }
 
 func Test_findRememberedConsentsByUser(t *testing.T) {
-	s := setupForFindRememberedConsentsByUser()
+	s := setupForFindRememberedConsentsByUser(t)
 
 	rcps := map[string]*cspb.RememberedConsentPreference{
 		"expired": {
@@ -1180,6 +1196,11 @@ func Test_findRememberedConsentsByUser(t *testing.T) {
 }
 
 func Test_findRememberedConsent(t *testing.T) {
+	server, err := fakeoidcissuer.New(hydraURL, &testkeys.PersonaBrokerKey, "dam-min", "testdata/config", false)
+	if err != nil {
+		t.Fatalf("fakeoidcissuer.New(%q, _, _) failed: %v", hydraURL, err)
+	}
+
 	expired := &cspb.RememberedConsentPreference{
 		ClientName: "cli",
 		ExpireTime: timeutil.TimestampProto(time.Time{}),
@@ -1268,6 +1289,7 @@ func Test_findRememberedConsent(t *testing.T) {
 			store := storage.NewMemoryStorage("ic-min", "testdata/config")
 
 			s := NewService(&Options{
+				HTTPClient:     server.Client(),
 				Domain:         domain,
 				ServiceName:    "ic",
 				AccountDomain:  domain,

@@ -15,35 +15,14 @@
 package ga4gh
 
 import (
-	"context"
 	"crypto/rsa"
 	"fmt"
 	"net/url"
 	"strings"
 
-	"github.com/coreos/go-oidc" /* copybara-comment */
-	"bitbucket.org/creachadair/stringset" /* copybara-comment */
-
-	jose "gopkg.in/square/go-jose.v2" /* copybara-comment */
-	josejwt "gopkg.in/square/go-jose.v2/jwt" /* copybara-comment */
+	"gopkg.in/square/go-jose.v2" /* copybara-comment */
+	"gopkg.in/square/go-jose.v2/jwt" /* copybara-comment */
 )
-
-// IsAudience returns true if the token's "azp" or "aud" contains the self string or clientID.
-func IsAudience(token *Identity, clientID, self string) bool {
-	if len(token.AuthorizedParty) == 0 && len(token.Audiences) == 0 {
-		// Is a public token.
-		return true
-	}
-	if clientID == "" {
-		return false
-	}
-	if len(self) > 0 {
-		if self == token.AuthorizedParty || stringset.Contains([]string(token.Audiences), self) {
-			return true
-		}
-	}
-	return clientID == token.AuthorizedParty || stringset.Contains([]string(token.Audiences), clientID)
-}
 
 // userID returns an user identifier that specifies a subject within an issuer.
 func userID(subject, issuer string, maxLength int) string {
@@ -68,17 +47,6 @@ func TokenUserID(token *Identity, maxLength int) string {
 	return userID(token.Subject, token.Issuer, maxLength)
 }
 
-// GetOIDCTokenVerifier returns an OIDC token verifier for a particular client.
-func GetOIDCTokenVerifier(ctx context.Context, clientID, issuer string) (*oidc.IDTokenVerifier, error) {
-	provider, err := oidc.NewProvider(ctx, issuer)
-	if err != nil {
-		return nil, fmt.Errorf("creating provider %q: %v", issuer, err)
-	}
-	return provider.Verifier(&oidc.Config{
-		ClientID: clientID,
-	}), nil
-}
-
 // VerifyTokenWithKey verifies the signature of a token given a public key.
 func VerifyTokenWithKey(publicKey *rsa.PublicKey, tok string) error {
 	jws, err := jose.ParseSigned(tok)
@@ -91,7 +59,7 @@ func VerifyTokenWithKey(publicKey *rsa.PublicKey, tok string) error {
 
 // ConvertTokenToIdentityUnsafe unsafely converts a token to an identity.
 func ConvertTokenToIdentityUnsafe(tok string) (*Identity, error) {
-	parsed, err := josejwt.ParseSigned(tok)
+	parsed, err := jwt.ParseSigned(tok)
 	if err != nil {
 		return nil, fmt.Errorf("parsing JWT: %v", err)
 	}
