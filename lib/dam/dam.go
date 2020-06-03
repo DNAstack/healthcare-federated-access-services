@@ -1158,6 +1158,9 @@ var (
 )
 
 func normalizeConfig(cfg *pb.DamConfig) error {
+	if cfg.Resources == nil {
+		cfg.Resources = make(map[string]*pb.Resource)
+	}
 	if cfg.Clients == nil {
 		cfg.Clients = make(map[string]*cpb.Client)
 	}
