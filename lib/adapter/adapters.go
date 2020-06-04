@@ -60,6 +60,7 @@ type Action struct {
 	TTL             time.Duration
 	ViewID          string
 	View            *pb.View
+	Interface       string
 	TokenFormat     string
 }
 

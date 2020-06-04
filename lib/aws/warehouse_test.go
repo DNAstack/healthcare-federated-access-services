@@ -38,15 +38,66 @@ func NewMockAPIClient(account string, userID string) *MockAwsClient {
 	}
 }
 
+type fullLoginProfile struct {
+	loginProfile *iam.LoginProfile
+	password     *string
+}
+
 // Mock AWS Client
 type MockAwsClient struct {
-	Account      string
-	UserID       string
-	Roles        []*iam.Role
-	RolePolicies []*iam.PutRolePolicyInput
-	Users        []*iam.User
-	UserPolicies []*iam.PutUserPolicyInput
-	AccessKeys   []*iam.AccessKey
+	Account          string
+	UserID           string
+	Roles            []*iam.Role
+	RolePolicies     []*iam.PutRolePolicyInput
+	Users            []*iam.User
+	UserPolicies     []*iam.PutUserPolicyInput
+	AccessKeys       []*iam.AccessKey
+	FullLoginProfile []*fullLoginProfile
+}
+
+func (m *MockAwsClient) CreateLoginProfile(input *iam.CreateLoginProfileInput) (*iam.CreateLoginProfileOutput, error) {
+	if _, err := m.GetLoginProfile(&iam.GetLoginProfileInput{UserName: input.UserName}); err == nil {
+		return nil, awserr.New(iam.ErrCodeEntityAlreadyExistsException, "should not depend on this", nil)
+	}
+
+	fullLoginProfile := &fullLoginProfile{
+		loginProfile: &iam.LoginProfile{
+			CreateDate:            aws.Time(time.Now()),
+			PasswordResetRequired: input.PasswordResetRequired,
+			UserName:              input.UserName,
+		},
+		password: input.Password,
+	}
+
+	m.FullLoginProfile = append(m.FullLoginProfile, fullLoginProfile)
+
+	return &iam.CreateLoginProfileOutput{
+		LoginProfile: fullLoginProfile.loginProfile,
+	}, nil
+}
+
+func (m *MockAwsClient) UpdateLoginProfile(input *iam.UpdateLoginProfileInput) (*iam.UpdateLoginProfileOutput, error) {
+	for _, flp := range m.FullLoginProfile {
+		if *flp.loginProfile.UserName == *input.UserName {
+			flp.password = input.Password
+			flp.loginProfile.PasswordResetRequired = input.PasswordResetRequired
+			return &iam.UpdateLoginProfileOutput{}, nil
+		}
+	}
+
+	return nil, awserr.New(iam.ErrCodeNoSuchEntityException, "shouldn't rely on this", nil)
+}
+
+func (m *MockAwsClient) GetLoginProfile(input *iam.GetLoginProfileInput) (*iam.GetLoginProfileOutput, error) {
+	for _, flp := range m.FullLoginProfile {
+		if *flp.loginProfile.UserName == *input.UserName {
+			return &iam.GetLoginProfileOutput{
+				LoginProfile: flp.loginProfile,
+			}, nil
+		}
+	}
+
+	return nil, awserr.New(iam.ErrCodeNoSuchEntityException, "shouldn't rely on this", nil)
 }
 
 func (m *MockAwsClient) ListUsers(input *iam.ListUsersInput) (*iam.ListUsersOutput, error) {
@@ -292,7 +343,7 @@ func TestAWS_MintTokenWithShortLivedTTL_Bucket(t *testing.T) {
 
 	expectedRoleName := fmt.Sprintf("%s,%s,%s@%s", params.DamResourceID, params.DamViewID, params.DamRoleID, damPrincipalID)
 	expectedRoleArn := fmt.Sprintf("arn:aws:iam::%s:role/ddap/%s", awsAccount, expectedRoleName)
-	validateMintedRoleCredentials(t, expectedRoleArn, result, err)
+	validateMintedRoleCredentials(t, awsAccount, expectedRoleArn, result, err)
 	validateCreatedRolePolicy(t, apiClient, expectedRoleName, params.TargetRoles)
 }
 
@@ -307,7 +358,7 @@ func TestAWS_MintTokenWithShortLivedTTL_Redshift(t *testing.T) {
 
 	expectedRoleName := fmt.Sprintf("%s,%s,%s@%s", params.DamResourceID, params.DamViewID, params.DamRoleID, damPrincipalID)
 	expectedRoleArn := fmt.Sprintf("arn:aws:iam::%s:role/ddap/%s", awsAccount, expectedRoleName)
-	validateMintedRoleCredentials(t, expectedRoleArn, result, err)
+	validateMintedRoleCredentials(t, awsAccount, expectedRoleArn, result, err)
 	validateCreatedRolePolicy(t, apiClient, expectedRoleName, params.TargetRoles)
 }
 
@@ -323,7 +374,7 @@ func TestAWS_MintTokenWithLongLivedTTL_Bucket(t *testing.T) {
 
 	expectedUserName := "ic_abc123@" + damPrincipalID
 	expectedUserArn := fmt.Sprintf("arn:aws:iam::%s:user/%s", awsAccount, expectedUserName)
-	validateMintedAccessKey(t, expectedUserArn, result, err)
+	validateMintedAccessKey(t, awsAccount, expectedUserArn, result, err)
 	validateCreatedUserPolicy(t, apiClient, expectedUserName, params.TargetRoles)
 }
 
@@ -339,11 +390,48 @@ func TestAWS_MintTokenWithLongLivedTTL_Redshift(t *testing.T) {
 
 	expectedUserName := "ic_abc123@" + damPrincipalID
 	expectedUserArn := fmt.Sprintf("arn:aws:iam::%s:user/%s", awsAccount, expectedUserName)
-	validateMintedAccessKey(t, expectedUserArn, result, err)
+	validateMintedAccessKey(t, awsAccount, expectedUserArn, result, err)
 	validateCreatedUserPolicy(t, apiClient, expectedUserName, params.TargetRoles)
 }
 
-func validateMintedRoleCredentials(t *testing.T, expectedAccount string, result *ResourceTokenResult, err error) {
+func TestAWS_MintTokenWithHumanAccess_Bucket(t *testing.T) {
+	awsAccount := "12345678"
+	damPrincipalID := "dam-user-id"
+	apiClient := NewMockAPIClient(awsAccount, damPrincipalID)
+	wh, _ := NewWarehouse(context.Background(), apiClient)
+	params := NewMockBucketParams(1 * time.Hour)
+	params.DamInterfaceID = HumanInterfacePrefix + "s3"
+
+	result, err := wh.MintTokenWithTTL(context.Background(), params)
+
+	expectedUserName := "ic_abc123@" + damPrincipalID
+	expectedUserArn := fmt.Sprintf("arn:aws:iam::%s:user/%s", awsAccount, expectedUserName)
+	validateMintedUsernamePassword(t, awsAccount, expectedUserArn, expectedUserName, result, err)
+	validateCreatedUserPolicy(t, apiClient, expectedUserName, params.TargetRoles)
+}
+
+func TestAWS_MintTokenWithHumanAccessConsecutively_Bucket(t *testing.T) {
+	awsAccount := "12345678"
+	damPrincipalID := "dam-user-id"
+	apiClient := NewMockAPIClient(awsAccount, damPrincipalID)
+	wh, _ := NewWarehouse(context.Background(), apiClient)
+	params := NewMockBucketParams(1 * time.Hour)
+	params.DamInterfaceID = HumanInterfacePrefix + "s3"
+
+	expectedUserName := "ic_abc123@" + damPrincipalID
+	expectedUserArn := fmt.Sprintf("arn:aws:iam::%s:user/%s", awsAccount, expectedUserName)
+
+	// First time
+	result1, err := wh.MintTokenWithTTL(context.Background(), params)
+	validateMintedUsernamePassword(t, awsAccount, expectedUserArn, expectedUserName, result1, err)
+	validateCreatedUserPolicy(t, apiClient, expectedUserName, params.TargetRoles)
+
+	// Second time
+	result2, err := wh.MintTokenWithTTL(context.Background(), params)
+	validateMintedUsernamePassword(t, awsAccount, expectedUserArn, expectedUserName, result2, err)
+}
+
+func validateMintedRoleCredentials(t *testing.T, expectedAccount, expectedPrincipal string, result *ResourceTokenResult, err error) {
 	if err != nil {
 		t.Errorf("expected minting a token but got error: %v", err)
 		return
@@ -356,18 +444,27 @@ func validateMintedRoleCredentials(t *testing.T, expectedAccount string, result 
 	if result.Account != expectedAccount {
 		t.Errorf("expected account [%s] but observed [%s]", expectedAccount, result.Account)
 	}
-	if !strings.HasSuffix(result.AccessKeyID, "-id") {
-		t.Errorf("expected AccessKeyID to be mocked id value but was [%s]", result.AccessKeyID)
+	if result.PrincipalARN != expectedPrincipal {
+		t.Errorf("expected principal [%s] but observed [%s]", expectedPrincipal, result.PrincipalARN)
 	}
-	if !strings.HasSuffix(result.SecretAccessKey, "-key") {
-		t.Errorf("expected SecretAccessKey to be mocked key value but was [%s]", result.SecretAccessKey)
+	if result.AccessKeyID == nil {
+		t.Errorf("expected AccessKeyID to be mocked id value but was nil")
+	} else if !strings.HasSuffix(*result.AccessKeyID, "-id") {
+		t.Errorf("expected AccessKeyID to be mocked id value but was [%s]", *result.AccessKeyID)
 	}
-	if !strings.HasSuffix(result.SessionToken, "-session-token") {
-		t.Errorf("expected SessionToken to be mocked session token value but was [%s]", result.SessionToken)
+	if result.SecretAccessKey == nil {
+		t.Errorf("expected SecretAccessKey to be mocked key value but was nil")
+	} else if !strings.HasSuffix(*result.SecretAccessKey, "-key") {
+		t.Errorf("expected SecretAccessKey to be mocked key value but was [%s]", *result.SecretAccessKey)
+	}
+	if result.SessionToken == nil {
+		t.Errorf("expected SessionToken to be mocked key value but was nil")
+	} else if !strings.HasSuffix(*result.SessionToken, "-session-token") {
+		t.Errorf("expected SessionToken to be mocked session token value but was [%s]", *result.SessionToken)
 	}
 }
 
-func validateMintedAccessKey(t *testing.T, expectedAccount string, result *ResourceTokenResult, err error) {
+func validateMintedAccessKey(t *testing.T, expectedAccount, expectedPrincipal string, result *ResourceTokenResult, err error) {
 	if err != nil {
 		t.Errorf("expected minting a token but got error: %v", err)
 		return
@@ -380,14 +477,47 @@ func validateMintedAccessKey(t *testing.T, expectedAccount string, result *Resou
 	if result.Account != expectedAccount {
 		t.Errorf("expected account [%s] but observed [%s]", expectedAccount, result.Account)
 	}
-	if !strings.HasSuffix(result.AccessKeyID, "-id") {
-		t.Errorf("expected AccessKeyID to be mocked id value but was [%s]", result.AccessKeyID)
+	if result.PrincipalARN != expectedPrincipal {
+		t.Errorf("expected principal [%s] but observed [%s]", expectedPrincipal, result.PrincipalARN)
 	}
-	if !strings.HasSuffix(result.SecretAccessKey, "-key") {
-		t.Errorf("expected SecretAccessKey to be mocked key value but was [%s]", result.SecretAccessKey)
+	if result.AccessKeyID == nil {
+		t.Errorf("expected AccessKeyID to be mocked id value but was nil")
+	} else if !strings.HasSuffix(*result.AccessKeyID, "-id") {
+		t.Errorf("expected AccessKeyID to be mocked id value but was [%s]", *result.AccessKeyID)
 	}
-	if result.SessionToken != "" {
-		t.Errorf("expected SessionToken to be empty for access key but was [%s]", result.SessionToken)
+	if result.SecretAccessKey == nil {
+		t.Errorf("expected SecretAccessKey to be mocked key value but was nil")
+	} else if !strings.HasSuffix(*result.SecretAccessKey, "-key") {
+		t.Errorf("expected SecretAccessKey to be mocked key value but was [%s]", *result.SecretAccessKey)
+	}
+	if result.SessionToken != nil {
+		t.Errorf("expected SessionToken to be nil for access key but was [%s]", *result.SessionToken)
+	}
+}
+
+func validateMintedUsernamePassword(t *testing.T, expectedAccount, expectedPrincipalARN, expectedUserName string, result *ResourceTokenResult, err error) {
+	if err != nil {
+		t.Errorf("expected minting a token but got error: %v", err)
+		return
+	}
+	if result == nil {
+		t.Error("expected non-nil result but result was nil")
+		return
+	}
+
+	if result.Account != expectedAccount {
+		t.Errorf("expected account [%s] but observed [%s]", expectedAccount, result.Account)
+	}
+	if result.PrincipalARN != expectedPrincipalARN {
+		t.Errorf("expected principal [%s] but observed [%s]", expectedPrincipalARN, result.PrincipalARN)
+	}
+	if result.UserName == nil {
+		t.Errorf("expected UserName to be mocked id value but was nil")
+	} else if *result.UserName != expectedUserName {
+		t.Errorf("expected UserName to be mocked id value but was [%s]", *result.UserName)
+	}
+	if result.Password == nil || *result.Password == "" {
+		t.Errorf("expected Password to be mocked id value but was nil or empty")
 	}
 }
 

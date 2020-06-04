@@ -113,13 +113,28 @@ func (a *AwsAdapter) MintToken(ctx context.Context, input *Action) (*MintTokenRe
 		return nil, fmt.Errorf("AWS minting token: %v", err)
 	}
 
+	credentials := map[string]string{
+		"account":   result.Account,
+		"principal": result.PrincipalARN,
+	}
+	if result.AccessKeyID != nil {
+		credentials["access_key_id"] = *result.AccessKeyID
+	}
+	if result.SecretAccessKey != nil {
+		credentials["secret"] = *result.SecretAccessKey
+	}
+	if result.SessionToken != nil {
+		credentials["session_token"] = *result.SessionToken
+	}
+	if result.UserName != nil {
+		credentials["username"] = *result.UserName
+	}
+	if result.Password != nil {
+		credentials["password"] = *result.Password
+	}
+
 	return &MintTokenResult{
-		Credentials: map[string]string{
-			"account":       result.Account,
-			"access_key_id": result.AccessKeyID,
-			"secret":        result.SecretAccessKey,
-			"session_token": result.SessionToken,
-		},
+		Credentials: credentials,
 		TokenFormat: result.Format,
 	}, nil
 }
@@ -158,6 +173,7 @@ func createAwsResourceTokenCreationParams(userID string, input *Action) (*aws.Re
 		DamResourceID:         input.ResourceID,
 		DamViewID:             input.ViewID,
 		DamRoleID:             input.GrantRole,
+		DamInterfaceID:        input.Interface,
 		ServiceTemplate:       input.ServiceTemplate,
 	}, nil
 }

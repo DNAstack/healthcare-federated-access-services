@@ -93,3 +93,15 @@ func (sac *sdkAPIClient) GetRole(input *iam.GetRoleInput) (*iam.GetRoleOutput, e
 func (sac *sdkAPIClient) CreateRole(input *iam.CreateRoleInput) (*iam.CreateRoleOutput, error) {
 	return sac.iamSvc.CreateRole(input)
 }
+
+func (sac *sdkAPIClient) CreateLoginProfile(input *iam.CreateLoginProfileInput) (*iam.CreateLoginProfileOutput, error) {
+	return sac.iamSvc.CreateLoginProfile(input)
+}
+
+func (sac *sdkAPIClient) UpdateLoginProfile(input *iam.UpdateLoginProfileInput) (*iam.UpdateLoginProfileOutput, error) {
+	return sac.iamSvc.UpdateLoginProfile(input)
+}
+
+func (sac *sdkAPIClient) GetLoginProfile(input *iam.GetLoginProfileInput) (*iam.GetLoginProfileOutput, error) {
+	return sac.iamSvc.GetLoginProfile(input)
+}

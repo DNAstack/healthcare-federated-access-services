@@ -16,6 +16,7 @@ require (
   github.com/golang/mock v1.3.1
   github.com/golang/protobuf v1.4.2
   github.com/google/go-cmp v0.4.0
+  github.com/google/uuid v1.1.1
   github.com/gorilla/mux v1.7.3
   github.com/hashicorp/golang-lru v0.5.3 // indirect
   github.com/pborman/uuid v1.2.0
