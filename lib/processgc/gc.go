@@ -34,10 +34,10 @@ const (
 
 // KeyGC is a service account key garbage collector background process.
 type KeyGC struct {
-	name          string
-	am            clouds.AccountManager
-	process       *processlib.Process
-	wait          func(ctx context.Context, duration time.Duration) bool
+	name    string
+	am      clouds.AccountManager
+	process *processlib.Process
+	wait    func(ctx context.Context, duration time.Duration) bool
 	// Function that returns true for accounts that should be garbage collected
 	accountFilter func(*clouds.Account) bool
 }
@@ -45,7 +45,7 @@ type KeyGC struct {
 type AccountFilter = func(account *clouds.Account) bool
 
 // NewKeyGC creates a new key garbage collector.
-func NewKeyGC(name string, warehouse clouds.AccountManager, store storage.Store, maxRequestedTTL time.Duration, keysPerAccount int, accountFilter AccountFilter) *KeyGC {
+func NewKeyGC(name string, warehouse clouds.AccountManager, store storage.Store, maxRequestedTTL time.Duration, keysPerAccount int, accountFilter func(account *clouds.Account) bool) *KeyGC {
 	k := &KeyGC{
 		name:          name,
 		am:            warehouse,

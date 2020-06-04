@@ -18,7 +18,6 @@ package adapter
 import (
 	"context"
 	"fmt"
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/osenv"
 	"regexp"
 	"strings"
 	"time"
@@ -54,12 +53,12 @@ type Action struct {
 	Identity        *ga4gh.Identity
 	Issuer          string
 	MaxTTL          time.Duration
-	ResourceId      string
+	ResourceID      string
 	Resource        *pb.Resource
 	ServiceRole     *pb.ServiceRole
 	ServiceTemplate *pb.ServiceTemplate
 	TTL             time.Duration
-	ViewId          string
+	ViewID          string
 	View            *pb.View
 	TokenFormat     string
 }
@@ -216,6 +215,5 @@ func stripAnchors(restr string) string {
 }
 
 func adapterFilePath(name string) string {
-	root := osenv.VarWithDefault("METADATA_PATH", "deploy/metadata")
-	return strings.ReplaceAll(root + "/adapter_" + name + ".json", "//", "/")
+	return "deploy/metadata/adapter_" + name + ".json"
 }

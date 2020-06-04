@@ -16,21 +16,24 @@ import (
 )
 
 const (
+	// AwsAdapterName is the name identifier exposed in config files.
 	AwsAdapterName = "aws"
-    PlatformName   = "aws"
+	platformName   = "aws"
 )
 
 //FIXME need to be moved to config, also the values
 const (
-	defaultGcFrequency    = 1 * 24 * time.Hour  /* 1 day */
+	defaultGcFrequency    = 1 * 24 * time.Hour /* 1 day */
 	defaultKeysPerAccount = 2
 )
 
+// AwsAdapter is the AWS IAM adapter.
 type AwsAdapter struct {
 	desc      map[string]*pb.ServiceDescriptor
 	warehouse *aws.AccountWarehouse
 }
 
+// NewAwsAdapter creates a new AwsAdapter.
 func NewAwsAdapter(store storage.Store, _ clouds.ResourceTokenCreator, _ kms.Signer, _ *ServiceAdapters) (ServiceAdapter, error) {
 	var msg pb.ServicesResponse
 	path := adapterFilePath(AwsAdapterName)
@@ -38,7 +41,7 @@ func NewAwsAdapter(store storage.Store, _ clouds.ResourceTokenCreator, _ kms.Sig
 		return nil, fmt.Errorf("reading %q service descriptors from path %q: %v", aggregatorName, path, err)
 	}
 	ctx := context.Background()
-	awsClient, err := aws.NewApiClient()
+	awsClient, err := aws.NewAPIClient()
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +55,7 @@ func NewAwsAdapter(store storage.Store, _ clouds.ResourceTokenCreator, _ kms.Sig
 		return true
 	})
 	//Register Accounts
-	if err := RegisterAccountGC(store, keyGC, wh); err != nil {
+	if err := registerAccountGC(store, keyGC, wh); err != nil {
 		return nil, fmt.Errorf("error registering AWS account key GC: %v", err)
 	}
 
@@ -65,31 +68,37 @@ func NewAwsAdapter(store storage.Store, _ clouds.ResourceTokenCreator, _ kms.Sig
 	go keyGC.Run(ctx)
 
 	return &AwsAdapter{
-		desc: msg.Services,
+		desc:      msg.Services,
 		warehouse: wh,
 	}, nil
 }
 
+// Name returns the name identifier of the adapter as used in configurations.
 func (a *AwsAdapter) Name() string {
 	return AwsAdapterName
 }
 
+// Descriptors returns a map of ServiceDescriptor descriptor.
 func (a *AwsAdapter) Descriptors() map[string]*pb.ServiceDescriptor {
 	return a.desc
 }
 
+// Platform returns the name identifier of the platform on which this adapter operates.
 func (a *AwsAdapter) Platform() string {
-	return PlatformName
+	return platformName
 }
 
+// IsAggregator returns true if this adapter requires TokenAction.Aggregates.
 func (a *AwsAdapter) IsAggregator() bool {
 	return false
 }
 
+// CheckConfig validates that a new configuration is compatible with this adapter.
 func (a *AwsAdapter) CheckConfig(_ string, _ *pb.ServiceTemplate, _, _ string, _ *pb.View, _ *pb.DamConfig, _ *ServiceAdapters) (string, error) {
 	return "", nil
 }
 
+// MintToken has the adapter mint a token.
 func (a *AwsAdapter) MintToken(ctx context.Context, input *Action) (*MintTokenResult, error) {
 	if a.warehouse == nil {
 		return nil, fmt.Errorf("AWS minting token: DAM service account warehouse not configured")
@@ -107,10 +116,9 @@ func (a *AwsAdapter) MintToken(ctx context.Context, input *Action) (*MintTokenRe
 	return &MintTokenResult{
 		Credentials: map[string]string{
 			"account":       result.Account,
-			"access_key_id": result.AccessKeyId,
+			"access_key_id": result.AccessKeyID,
 			"secret":        result.SecretAccessKey,
 			"session_token": result.SessionToken,
-
 		},
 		TokenFormat: result.Format,
 	}, nil
@@ -140,21 +148,21 @@ func createAwsResourceTokenCreationParams(userID string, input *Action) (*aws.Re
 	maxKeyTTL := timeutil.ParseDurationWithDefault(input.Config.Options.GcpManagedKeysMaxRequestedTtl, input.MaxTTL)
 
 	return &aws.ResourceParams{
-		UserId:                userID,
-		Ttl:                   input.TTL,
-		MaxKeyTtl:             maxKeyTTL,
+		UserID:                userID,
+		TTL:                   input.TTL,
+		MaxKeyTTL:             maxKeyTTL,
 		ManagedKeysPerAccount: int(input.Config.Options.GcpManagedKeysPerAccount),
 		Vars:                  vars,
 		TargetRoles:           roles,
 		TargetScopes:          scopes,
-		DamResourceId:         input.ResourceId,
-		DamViewId:             input.ViewId,
-		DamRoleId:             input.GrantRole,
+		DamResourceID:         input.ResourceID,
+		DamViewID:             input.ViewID,
+		DamRoleID:             input.GrantRole,
 		ServiceTemplate:       input.ServiceTemplate,
 	}, nil
 }
 
-func RegisterAccountGC(store storage.Store, keyGC *processgc.KeyGC, wh *aws.AccountWarehouse) error {
+func registerAccountGC(store storage.Store, keyGC *processgc.KeyGC, wh *aws.AccountWarehouse) error {
 	// IMPORTANT this transaction is closed in `process.go`
 	// FIXME, maybe move this transaction creation closer to where it is used/closed?
 	tx, err := store.Tx(true)
