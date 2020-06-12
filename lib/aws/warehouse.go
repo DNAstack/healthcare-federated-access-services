@@ -1,4 +1,4 @@
-// Copyright 2019 Google LLC
+// Copyright 2020 Google LLC.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -170,7 +170,7 @@ func (wh *AccountWarehouse) GetServiceAccounts(ctx context.Context, _ string) (<
 			}
 			return nil
 		}
-		// FIXME: get PathPrefix from config
+		// TODO: get PathPrefix from config
 		accounts, err := wh.apiClient.ListUsers(&iam.ListUsersInput{
 			PathPrefix: aws.String("/ddap/"),
 		})
@@ -205,6 +205,7 @@ func (wh *AccountWarehouse) RemoveServiceAccount(_ context.Context, _, _ string)
 
 // ManageAccountKeys is the main method where key removal happens
 func (wh *AccountWarehouse) ManageAccountKeys(_ context.Context, _, accountID string, _, maxKeyTTL time.Duration, now time.Time, keysPerAccount int64) (int, int, error) {
+	// A key has expired if key.CreatedDate + maxTTL < now, i.e. key.ValidAfterTime < now - maxTTL
 	expired := now.Add(-1 * maxKeyTTL).Format(time.RFC3339)
 	accessKeys, err := wh.apiClient.ListAccessKeys(&iam.ListAccessKeysInput{
 		UserName: aws.String(accountID),
@@ -216,8 +217,8 @@ func (wh *AccountWarehouse) ManageAccountKeys(_ context.Context, _, accountID st
 	var actives []*iam.AccessKeyMetadata
 	active := len(keys)
 	for _, key := range keys {
-		t := timeutil.TimestampProto(aws.TimeValue(key.CreateDate))
-		if timeutil.RFC3339(t) < expired {
+		t := aws.TimeValue(key.CreateDate).Format(time.RFC3339)
+		if t < expired {
 			// Access key deletion
 			_, err := wh.apiClient.DeleteAccessKey(&iam.DeleteAccessKeyInput{
 				AccessKeyId: key.AccessKeyId,
