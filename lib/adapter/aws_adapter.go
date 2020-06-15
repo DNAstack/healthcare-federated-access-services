@@ -12,6 +12,7 @@ import (
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage"
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/timeutil" /* copybara-comment: timeutil */
 	pb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/dam/v1"
+	"os"
 	"time"
 )
 
@@ -40,6 +41,15 @@ func NewAwsAdapter(store storage.Store, _ clouds.ResourceTokenCreator, _ kms.Sig
 	if err := srcutil.LoadProto(path, &msg); err != nil {
 		return nil, fmt.Errorf("reading %q service descriptors from path %q: %v", aggregatorName, path, err)
 	}
+
+	// TODO: Initialize with mock dependencies for testing
+	if os.Getenv("AWS_ADAPTER_TEST_MODE") == "true" {
+		return &AwsAdapter{
+			desc:      msg.Services,
+			warehouse: nil,
+		}, nil
+	}
+
 	ctx := context.Background()
 	awsClient, err := aws.NewAPIClient()
 	if err != nil {
