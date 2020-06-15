@@ -14,6 +14,10 @@ WORKDIR /build
 
 # Now add sources, which will bust the cache.
 ADD target/ ./
+
+# Run tests
+RUN ./runtest.bash
+
 # Build a binaries
 RUN CGO_ENABLED=0 GOOS=linux GOPATH=$(pwd)/gcp go build -a -o gcp/dam/main gcp/dam/main.go
 RUN CGO_ENABLED=0 GOOS=linux GOPATH=$(pwd)/gcp go build -a -o gcp/ic/main gcp/ic/main.go

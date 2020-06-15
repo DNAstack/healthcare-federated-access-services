@@ -1875,9 +1875,6 @@ func TestLoggedIn_Hydra_Success(t *testing.T) {
 	if !ok {
 		t.Errorf("AcceptLoginReq.Context[%s] is wrong type", stateIDInHydra)
 	}
-	if _, ok := h.AcceptLoginReq.Context["identities"]; ok {
-		t.Errorf("AcceptLoginReq.Context[identities] should not exists")
-	}
 
 	state := &pb.ResourceTokenRequestState{}
 	err = s.store.Read(storage.ResourceTokenRequestStateDataType, storage.DefaultRealm, storage.DefaultUser, stateID, storage.LatestRev, state)
