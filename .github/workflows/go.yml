@@ -27,6 +27,4 @@ jobs:
       run: go build -v ./...
 
     - name: Test
-      run: |
-        export PROJECT_ROOT=`pwd`
-        go test -v ./...
+      run: ./runtest.bash
