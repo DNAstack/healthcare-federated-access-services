@@ -29,14 +29,7 @@ import (
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/test/fakegrpc" /* copybara-comment: fakegrpc */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/test/fakeiam" /* copybara-comment: fakeiam */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/test/fakestore" /* copybara-comment: fakestore */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/timeutil"       /* copybara-comment: timeutil */
-	"github.com/google/go-cmp/cmp"                                                           /* copybara-comment */
-	"google.golang.org/api/bigquery/v2"                                                      /* copybara-comment: bigquery */
-	"google.golang.org/api/cloudresourcemanager/v1"                                          /* copybara-comment: cloudresourcemanager */
-	"google.golang.org/api/option"                                                           /* copybara-comment: option */
-	gcs "google.golang.org/api/storage/v1"                                                   /* copybara-comment: storage */
-	"google.golang.org/grpc"                                                                 /* copybara-comment */
-	"google.golang.org/protobuf/testing/protocmp"                                            /* copybara-comment */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/timeutil" /* copybara-comment: timeutil */
 
 	iamgrpcpb "google.golang.org/genproto/googleapis/iam/admin/v1" /* copybara-comment: iam_go_grpc */
 	iamcredsgrpcpb "google.golang.org/genproto/googleapis/iam/credentials/v1" /* copybara-comment: iamcredentials_go_grpc */
@@ -44,8 +37,6 @@ import (
 	iamcreds "cloud.google.com/go/iam/credentials/apiv1" /* copybara-comment: credentials */
 	gcs "google.golang.org/api/storage/v1" /* copybara-comment: storage */
 	cpb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/common/v1" /* copybara-comment: go_proto */
-	iamgrpcpb "google.golang.org/genproto/googleapis/iam/admin/v1"                            /* copybara-comment: iam_go_grpc */
-	iamcredsgrpcpb "google.golang.org/genproto/googleapis/iam/credentials/v1"                 /* copybara-comment: iamcredentials_go_grpc */
 )
 
 func TestNew(t *testing.T) {
