@@ -38,6 +38,7 @@ import (
 	"github.com/golang/protobuf/jsonpb" /* copybara-comment */
 	"github.com/golang/protobuf/proto" /* copybara-comment */
 	"google.golang.org/protobuf/testing/protocmp" /* copybara-comment */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/aws"
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/apis/hydraapi" /* copybara-comment: hydraapi */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/auditlog" /* copybara-comment: auditlog */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/clouds" /* copybara-comment: clouds */
@@ -99,6 +100,7 @@ func TestHandlers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fakeoidcissuer.New(%q, _, _) failed: %v", hydraPublicURL, err)
 	}
+	awsClient := aws.NewMockAPIClient("123456", "dam-user-id")
 	s := NewService(&Options{
 		HTTPClient:     server.Client(),
 		Domain:         "test.org",
@@ -106,6 +108,7 @@ func TestHandlers(t *testing.T) {
 		DefaultBroker:  "no-broker",
 		Store:          store,
 		Warehouse:      wh,
+		AWSClient:      awsClient,
 		UseHydra:       useHydra,
 		HydraAdminURL:  hydraAdminURL,
 		HydraPublicURL: hydraPublicURL,
@@ -905,6 +908,7 @@ func TestMinConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fakeoidcissuer.New(%q, _, _) failed: %v", hydraPublicURL, err)
 	}
+	awsClient := aws.NewMockAPIClient("123456", "dam-user-id")
 	opts := &Options{
 		HTTPClient:       server.Client(),
 		Domain:           "test.org",
@@ -912,6 +916,7 @@ func TestMinConfig(t *testing.T) {
 		DefaultBroker:    "no-broker",
 		Store:            store,
 		Warehouse:        nil,
+		AWSClient:        awsClient,
 		UseHydra:         useHydra,
 		HydraAdminURL:    hydraAdminURL,
 		HydraPublicURL:   hydraPublicURL,
@@ -956,6 +961,7 @@ func TestConfig_Add_NilResource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBroker() failed: %v", err)
 	}
+	awsClient := aws.NewMockAPIClient("123456", "dam-user-id")
 	s := NewService(&Options{
 		HTTPClient:     httptestclient.New(broker.Handler),
 		Domain:         "test.org",
@@ -963,6 +969,7 @@ func TestConfig_Add_NilResource(t *testing.T) {
 		DefaultBroker:  testBroker,
 		Store:          store,
 		Warehouse:      wh,
+		AWSClient: 		awsClient,
 		UseHydra:       useHydra,
 		HydraAdminURL:  hydraAdminURL,
 		HydraPublicURL: hydraPublicURL,
@@ -1044,6 +1051,7 @@ func setupAuthorizationTest(t *testing.T) *authTestContext {
 		t.Fatalf("fakeoidcissuer.New(%q, _, _) failed: %v", hydraPublicURL, err)
 	}
 	ctx := server.ContextWithClient(context.Background())
+	awsClient := aws.NewMockAPIClient("123456", "dam-user-id")
 	s := NewService(&Options{
 		HTTPClient:     server.Client(),
 		Domain:         "test.org",
@@ -1051,6 +1059,7 @@ func setupAuthorizationTest(t *testing.T) *authTestContext {
 		DefaultBroker:  "no-broker",
 		Store:          store,
 		Warehouse:      nil,
+		AWSClient: 		awsClient,
 		UseHydra:       useHydra,
 		HydraAdminURL:  hydraAdminURL,
 		HydraPublicURL: hydraPublicURL,
@@ -1309,6 +1318,7 @@ func Test_populateIdentityVisas_oidc_and_jku(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBroker() failed: %v", err)
 	}
+	awsClient := aws.NewMockAPIClient("123456", "dam-user-id")
 
 	s := NewService(&Options{
 		HTTPClient:     httptestclient.New(broker.Handler),
@@ -1316,6 +1326,7 @@ func Test_populateIdentityVisas_oidc_and_jku(t *testing.T) {
 		ServiceName:    "dam",
 		DefaultBroker:  testBroker,
 		Store:          store,
+		AWSClient: 		awsClient,
 		UseHydra:       useHydra,
 		HydraAdminURL:  hydraAdminURL,
 		HydraPublicURL: hydraPublicURL,
@@ -1442,6 +1453,7 @@ func setupHydraTest(readOnlyMasterRealm bool) (*Service, *pb.DamConfig, *pb.DamS
 	h := fakehydra.New(broker.Handler)
 
 	wh := clouds.NewMockTokenCreator(false)
+	awsClient := aws.NewMockAPIClient("123456", "dam-user-id")
 	s := NewService(&Options{
 		HTTPClient:     httptestclient.New(broker.Handler),
 		Domain:         "https://test.org",
@@ -1449,6 +1461,7 @@ func setupHydraTest(readOnlyMasterRealm bool) (*Service, *pb.DamConfig, *pb.DamS
 		DefaultBroker:  testBroker,
 		Store:          store,
 		Warehouse:      wh,
+		AWSClient: 		awsClient,
 		UseHydra:       useHydra,
 		HydraAdminURL:  hydraAdminURL,
 		HydraPublicURL: hydraPublicURL,
