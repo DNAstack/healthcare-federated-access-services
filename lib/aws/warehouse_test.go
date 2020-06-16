@@ -49,6 +49,7 @@ type MockAwsClient struct {
 	UserID           string
 	Roles            []*iam.Role
 	RolePolicies     []*iam.PutRolePolicyInput
+	AssumedRoles     []*sts.AssumeRoleInput
 	Users            []*iam.User
 	UserPolicies     []*iam.PutUserPolicyInput
 	AccessKeys       []*iam.AccessKey
@@ -100,7 +101,7 @@ func (m *MockAwsClient) GetLoginProfile(input *iam.GetLoginProfileInput) (*iam.G
 	return nil, awserr.New(iam.ErrCodeNoSuchEntityException, "shouldn't rely on this", nil)
 }
 
-func (m *MockAwsClient) ListUsers(input *iam.ListUsersInput) (*iam.ListUsersOutput, error) {
+func (m *MockAwsClient) ListUsers(_ *iam.ListUsersInput) (*iam.ListUsersOutput, error) {
 	panic("implement me")
 }
 
@@ -154,6 +155,7 @@ func (m *MockAwsClient) GetCallerIdentity(_ *sts.GetCallerIdentityInput) (*sts.G
 func (m *MockAwsClient) AssumeRole(input *sts.AssumeRoleInput) (*sts.AssumeRoleOutput, error) {
 	for _, role := range m.Roles {
 		if *input.RoleArn == *role.Arn {
+			m.AssumedRoles = append(m.AssumedRoles, input)
 			duration := time.Duration(*input.DurationSeconds) * time.Second
 			cred := fmt.Sprintf("%s-%d", time.Now().String(), rand.Int())
 			return &sts.AssumeRoleOutput{
@@ -375,7 +377,26 @@ func TestAWS_MintTokenWithShortLivedTTL_Redshift(t *testing.T) {
 	expectedRoleName := fmt.Sprintf("%s,%s,%s@%s", params.DamResourceID, params.DamViewID, params.DamRoleID, damPrincipalID)
 	expectedRoleArn := fmt.Sprintf("arn:aws:iam::%s:role/ddap/%s", awsAccount, expectedRoleName)
 	validateMintedRoleCredentials(t, awsAccount, expectedRoleArn, result, err)
-	validateCreatedRolePolicy(t, apiClient, expectedRoleName, params.TargetRoles)
+
+	if len(apiClient.Roles) != 1 {
+		t.Errorf("expected a single role to be created but found %v", apiClient.Roles)
+	} else {
+		role := apiClient.Roles[0]
+		if *role.RoleName != expectedRoleName {
+			t.Errorf("expected created role name to be [%s] but was [%s]", expectedRoleName, *role.RoleName)
+		}
+	}
+
+	if len(apiClient.RolePolicies) != 0 {
+		t.Errorf("expected a no global role policy to be created but found %v", apiClient.RolePolicies)
+	}
+
+	if len(apiClient.AssumedRoles) != 1 {
+		t.Errorf("expected a single role to be assumed but found %v", apiClient.AssumedRoles)
+	} else {
+		assumedRoleInput := apiClient.AssumedRoles[0]
+		validatePolicyDoc(t, params.TargetRoles, assumedRoleInput.Policy)
+	}
 }
 
 func TestAWS_MintTokenWithLongLivedTTL_Bucket(t *testing.T) {
@@ -684,12 +705,22 @@ func validateCreatedRolePolicy(t *testing.T, apiClient *MockAwsClient, expectedR
 				expectedRoleName,
 				*policy.RoleName)
 		}
-		for _, targetRole := range targetRoles {
-			if !strings.Contains(*policy.PolicyDocument, targetRole) {
-				t.Errorf("expected policy document to contain target role [%s] but this was the policy document:\n%s",
-					targetRole,
-					*policy.PolicyDocument)
-			}
+		policyDoc := policy.PolicyDocument
+		validatePolicyDoc(t, targetRoles, policyDoc)
+	}
+}
+
+func validatePolicyDoc(t *testing.T, targetRoles []string, policyDoc *string) {
+	if policyDoc == nil {
+		t.Errorf("expected a session policy but none found")
+		return
+	}
+
+	for _, targetRole := range targetRoles {
+		if !strings.Contains(*policyDoc, targetRole) {
+			t.Errorf("expected policy document to contain target role [%s] but this was the policy document:\n%s",
+				targetRole,
+				*policyDoc)
 		}
 	}
 }

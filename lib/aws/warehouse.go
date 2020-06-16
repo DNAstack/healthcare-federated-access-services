@@ -274,8 +274,9 @@ type ResourceParams struct {
 }
 
 type resourceSpec struct {
-	rType resourceType
-	arn   string
+	rType      resourceType
+	arn        string
+	userScoped bool
 }
 
 type principalSpec struct {
@@ -283,6 +284,8 @@ type principalSpec struct {
 	// Used for roles that must be assumed
 	damPrincipalARN      string
 	damPrincipalUserName string
+	// path must start and end with slash
+	path                 string
 	account              string
 	params               *ResourceParams
 }
@@ -294,13 +297,25 @@ type credentialSpec struct {
 }
 
 type policySpec struct {
-	principal *principalSpec
+	credSpec  *credentialSpec
 	rSpecs    []*resourceSpec
 	params    *ResourceParams
 }
 
 func (spec *policySpec) getID() string {
-	return spec.principal.getDamResourceViewRoleID()
+	return spec.credSpec.principalSpec.getDamResourceViewRoleID()
+}
+
+func (spec *policySpec) sessionScoped() bool {
+	if spec.credSpec.principalSpec.pType == roleType {
+		for _, rSpec:= range spec.rSpecs {
+			if rSpec.userScoped {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 func (spec *principalSpec) getID() string {
@@ -316,9 +331,9 @@ func (spec *principalSpec) getDamResourceViewRoleID() string {
 
 func (spec *principalSpec) getARN() string {
 	if spec.pType == roleType {
-		return fmt.Sprintf("arn:aws:iam::%s:role/%s", spec.account, spec.getID())
+		return fmt.Sprintf("arn:aws:iam::%s:role%s%s", spec.account, spec.path, spec.getID())
 	}
-	return fmt.Sprintf("arn:aws:iam::%s:user/%s", spec.account, spec.getID())
+	return fmt.Sprintf("arn:aws:iam::%s:user%s%s", spec.account, spec.path, spec.getID())
 }
 
 func calculateDBuserARN(clusterARN string, userName string) (string, error) {
@@ -352,21 +367,17 @@ func (wh *AccountWarehouse) MintTokenWithTTL(ctx context.Context, params *Resour
 		return nil, err
 	}
 	polSpec := &policySpec{
-		principal: credSpec.principalSpec,
-		rSpecs:    rSpecs,
-		params:    params,
+		credSpec: credSpec,
+		rSpecs:   rSpecs,
+		params:   params,
 	}
 
 	principalARN, err := wh.ensurePrincipal(credSpec.principalSpec)
 	if err != nil {
 		return nil, err
 	}
-	err = wh.ensurePolicy(polSpec)
-	if err != nil {
-		return nil, err
-	}
 
-	return wh.ensureTokenResult(ctx, principalARN, credSpec)
+	return wh.ensureTokenResult(ctx, principalARN, polSpec)
 }
 
 func (wh *AccountWarehouse) determineResourceSpecs(params *ResourceParams) ([]*resourceSpec, error) {
@@ -401,8 +412,9 @@ func (wh *AccountWarehouse) determineResourceSpecs(params *ResourceParams) ([]*r
 			return nil, err
 		}
 		userSpec := &resourceSpec{
-			rType: otherRType,
-			arn:   dbUserARN,
+			rType:      otherRType,
+			arn:        dbUserARN,
+			userScoped: true,
 		}
 		group, ok := params.Vars["group"]
 		if ok {
@@ -461,6 +473,8 @@ func (wh *AccountWarehouse) determinePrincipalSpec(credSpec *credentialSpec) *pr
 		damPrincipalUserName: wh.svcUserName,
 		account:              wh.account,
 		params:               params,
+		// TODO: Make prefix configurable for different dam deployments
+		path:                 "/ddap/",
 	}
 
 	if credSpec.cType == temporaryKey {
@@ -472,22 +486,28 @@ func (wh *AccountWarehouse) determinePrincipalSpec(credSpec *credentialSpec) *pr
 	return princSpec
 }
 
-func (wh *AccountWarehouse) ensureTokenResult(ctx context.Context, principalARN string, credSpec *credentialSpec) (*ResourceTokenResult, error) {
-	switch credSpec.cType {
+func (wh *AccountWarehouse) ensureTokenResult(ctx context.Context, principalARN string, polSpec *policySpec) (*ResourceTokenResult, error) {
+	if !polSpec.sessionScoped() {
+		err := wh.ensureGlobalPolicy(polSpec)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	switch polSpec.credSpec.cType {
 	case permanentKey:
-		return wh.ensureAccessKeyResult(ctx, principalARN, credSpec.principalSpec)
+		return wh.ensureAccessKeyResult(ctx, principalARN, polSpec.credSpec.principalSpec)
 	case temporaryKey:
-		return wh.createTempCredentialResult(principalARN, credSpec.params)
+		return wh.createTempCredentialResult(polSpec)
 	case usernamePassword:
 		return wh.createUsernamePasswordResult(principalARN)
 	default:
-		return nil, fmt.Errorf("cannot generate token for invalid spec with [%v] credential type", credSpec.cType)
+		return nil, fmt.Errorf("cannot generate token for invalid spec with [%v] credential type", polSpec.credSpec.cType)
 	}
 }
 
-func(wh *AccountWarehouse) createTempCredentialResult(principalARN string, params *ResourceParams) (*ResourceTokenResult, error) {
-	userID := convertDamUserIDtoAwsName(params.UserID, wh.svcUserName)
-	aro, err := wh.assumeRole(userID, principalARN, params.TTL)
+func(wh *AccountWarehouse) createTempCredentialResult(polSpec *policySpec) (*ResourceTokenResult, error) {
+	aro, err := wh.assumeRole(polSpec)
 	if err != nil {
 		return nil, err
 	}
@@ -542,17 +562,18 @@ func(wh *AccountWarehouse) ensurePrincipal(princSpec *principalSpec) (string, er
 	return wh.ensureUser(princSpec)
 }
 
-func(wh *AccountWarehouse) ensurePolicy(spec *policySpec) error {
+func(wh *AccountWarehouse) ensureGlobalPolicy(spec *policySpec) error {
 	if len(spec.rSpecs) == 0 {
 		return fmt.Errorf("cannot have policy without any resources")
 	}
-	switch spec.principal.pType {
+
+	switch spec.credSpec.principalSpec.pType {
 	case userType:
 		return wh.ensureUserPolicy(spec)
 	case roleType:
 		return wh.ensureRolePolicy(spec)
 	default:
-		return fmt.Errorf("cannot generate policy for invalid spec with [%v] principal type", spec.principal.pType)
+		return fmt.Errorf("cannot generate policy for invalid spec with [%v] principal type", spec.credSpec.principalSpec.pType)
 	}
 }
 
@@ -567,14 +588,28 @@ func convertDamUserIDtoAwsName(endUserID, damSvcUserName string) string {
 	return sessionName[0:maxLen]
 }
 
-func(wh *AccountWarehouse) assumeRole(sessionName string, roleARN string, ttl time.Duration) (*sts.AssumeRoleOutput, error) {
+func(wh *AccountWarehouse) assumeRole(polSpec *policySpec) (*sts.AssumeRoleOutput, error) {
+	params := polSpec.params
+	roleARN := polSpec.credSpec.principalSpec.getARN()
+	sessionName := convertDamUserIDtoAwsName(params.UserID, wh.svcUserName)
+
+	var sessPolicy *string = nil
+	if polSpec.sessionScoped() {
+		policyJSON, err := convertToPolicyJSON(polSpec)
+		if err != nil {
+			return nil, err
+		}
+		sessPolicy = aws.String(string(policyJSON))
+	}
+
 	var aro *sts.AssumeRoleOutput
 	f := func() error {
 		var err error
 		aro, err = wh.apiClient.AssumeRole(&sts.AssumeRoleInput{
 			RoleArn:         aws.String(roleARN),
 			RoleSessionName: aws.String(sessionName),
-			DurationSeconds: toSeconds(ttl),
+			DurationSeconds: toSeconds(params.TTL),
+			Policy: sessPolicy,
 		})
 
 		return err
@@ -657,16 +692,7 @@ type statement struct {
 
 func(wh *AccountWarehouse) ensureRolePolicy(spec *policySpec) error {
 	// TODO: handle policy versioning
-	resourceARNs := resourceARNToArray(spec.rSpecs)
-	policy := &policy{
-		Version:   "2012-10-17",
-		Statement: statement{
-			Effect:   "Allow",
-			Action:   spec.params.TargetRoles,
-			Resource: resourceARNs,
-		},
-	}
-	policyJSON, err := json.Marshal(policy)
+	policyJSON, err := convertToPolicyJSON(spec)
 	if err != nil {
 		return fmt.Errorf("error creating AWS policy JSON: %v", err)
 	}
@@ -675,14 +701,28 @@ func(wh *AccountWarehouse) ensureRolePolicy(spec *policySpec) error {
 	return backoff.Retry(f, exponentialBackoff)
 }
 
+func convertToPolicyJSON(spec *policySpec) ([]byte, error) {
+	resourceARNs := resourceARNToArray(spec.rSpecs)
+	policy := &policy{
+		Version: "2012-10-17",
+		Statement: statement{
+			Effect:   "Allow",
+			Action:   spec.params.TargetRoles,
+			Resource: resourceARNs,
+		},
+	}
+
+	return json.Marshal(policy)
+}
+
 func (wh *AccountWarehouse) putRolePolicy(spec *policySpec, policy string) error {
 	_, err := wh.apiClient.PutRolePolicy(&iam.PutRolePolicyInput{
 		PolicyName:     aws.String(spec.getID()),
-		RoleName:       aws.String(spec.principal.getID()),
+		RoleName:       aws.String(spec.credSpec.principalSpec.getID()),
 		PolicyDocument: aws.String(policy),
 	})
 	if err != nil {
-		return fmt.Errorf("unable to create AWS role policy %s: %v", spec.principal.getID(), err)
+		return fmt.Errorf("unable to create AWS role policy %s: %v", spec.credSpec.principalSpec.getID(), err)
 	}
 	return nil
 }
@@ -715,11 +755,11 @@ func(wh *AccountWarehouse) ensureUserPolicy(spec *policySpec) error {
 func(wh *AccountWarehouse) putUserPolicy(spec *policySpec, policy string) error {
 	_, err := wh.apiClient.PutUserPolicy(&iam.PutUserPolicyInput{
 		PolicyName:     aws.String(spec.getID()),
-		UserName:       aws.String(spec.principal.getID()),
+		UserName:       aws.String(spec.credSpec.principalSpec.getID()),
 		PolicyDocument: aws.String(policy),
 	})
 	if err != nil {
-		return fmt.Errorf("unable to create AWS user policy %s: %v", spec.principal.getID(), err)
+		return fmt.Errorf("unable to create AWS user policy %s: %v", spec.credSpec.principalSpec.getID(), err)
 	}
 	return nil
 }
@@ -732,8 +772,7 @@ func(wh *AccountWarehouse) ensureUser(spec *principalSpec) (string, error) {
 		if aerr, ok := err.(awserr.Error); ok && aerr.Code() == iam.ErrCodeNoSuchEntityException {
 			cuo, err := wh.apiClient.CreateUser(&iam.CreateUserInput{
 				UserName: aws.String(spec.getID()),
-				// TODO: Make prefix configurable for different dam deployments
-				Path: aws.String("/ddap/"),
+				Path: aws.String(spec.path),
 			})
 			if err != nil {
 				return "", fmt.Errorf("unable to create IAM user %s: %v", spec.getID(), err)
@@ -767,8 +806,7 @@ func(wh *AccountWarehouse) ensureRole(spec *principalSpec) (string, error) {
 			cro, err := wh.apiClient.CreateRole(&iam.CreateRoleInput{
 				AssumeRolePolicyDocument: aws.String(string(policyJSON)),
 				RoleName:                 aws.String(spec.getID()),
-				// TODO: Make prefix configurable for different dam deployments
-				Path:                     aws.String("/ddap/"),
+				Path:                     aws.String(spec.path),
 				MaxSessionDuration:       toSeconds(TemporaryCredMaxTTL),
 				Tags: []*iam.Tag{
 					{Key: aws.String("DamResource"), Value: aws.String(spec.params.DamResourceID)},
