@@ -11,8 +11,8 @@
               "type": "const",
               "regexp": "^.*$",
               "ui": {
-                 "label": "AWS Policies",
-                 "description": "AWS standard or custom policy name starting"
+                 "label": "AWS Actions",
+                 "description": "AWS action name"
               }
            }
         },
@@ -42,8 +42,8 @@
                "type": "const",
                "regexp": "^.*$",
                "ui": {
-                  "label": "AWS Policies",
-                  "description": "AWS standard or custom policy name starting"
+                  "label": "AWS Actions",
+                  "description": "AWS action name"
                }
             }
          },
@@ -69,6 +69,38 @@
          "ui": {
             "label": "AWS Redshift",
             "description": "Amazon Redshift is a fully managed, petabyte-scale data warehouse service in the cloud."
+         }
+      },
+      "redshift-console": {
+         "platform": "aws",
+         "properties": {
+            "isAggregate": false,
+            "canBeAggregated": true
+         },
+         "serviceVariables": {
+            "roles": {
+               "type": "const",
+               "regexp": "^.*$",
+               "ui": {
+                  "label": "AWS Actions",
+                  "description": "AWS action name"
+               }
+            }
+         },
+         "itemVariables": {
+            "resources": {
+               "type": "split_pattern",
+               "regexp": ".*",
+               "optional": true,
+               "ui": {
+                  "label": "AWS resource ARNs",
+                  "description": "The globally unique ARNs for resources used in the generated policy"
+               }
+            }
+         },
+         "ui": {
+            "label": "AWS Redshift Web Console",
+            "description": "AWS Redshift Web Console"
          }
       }
    }

@@ -43,6 +43,8 @@ const (
 	S3ItemFormat        = "s3bucket"
 	// RedshiftItemFormat is the canonical item format identifier for Redshift clusters.
 	RedshiftItemFormat  = "redshift"
+	// RedshiftConsoleItemFormat is the canonical item format identifier for the Redshift console.
+	RedshiftConsoleItemFormat  = "redshift-console"
 	// HumanInterfacePrefix is the canonical prefix for interface URNs that grant console access to AWS resources.
 	HumanInterfacePrefix = "web:aws:"
 )
@@ -274,7 +276,6 @@ type ResourceParams struct {
 type resourceSpec struct {
 	rType resourceType
 	arn   string
-	id    string
 }
 
 type principalSpec struct {
@@ -338,25 +339,6 @@ func extractAccount(arn string) (string, error) {
 	return parts[4], nil
 }
 
-func extractClusterName(arn string) (string, error) {
-	parts := strings.Split(arn, ":")
-	if len(parts) < 7 {
-		return "", fmt.Errorf("argument is not a proper ARN: %s", arn)
-	}
-
-	return parts[6], nil
-}
-
-func extractDBGroupName(arn string) (string, error) {
-	arnParts := strings.Split(arn, ":")
-	if len(arnParts) < 7 {
-		return "", fmt.Errorf("argument is not a proper ARN: %s", arn)
-	}
-	pathParts := strings.Split(arnParts[6], "/")
-
-	return pathParts[len(pathParts)-1], nil
-}
-
 // MintTokenWithTTL returns an AccountKey or an AccessToken depending on the TTL requested.
 func (wh *AccountWarehouse) MintTokenWithTTL(ctx context.Context, params *ResourceParams) (*ResourceTokenResult, error) {
 	if params.TTL > params.MaxKeyTTL {
@@ -396,12 +378,10 @@ func (wh *AccountWarehouse) determineResourceSpecs(params *ResourceParams) ([]*r
 		}
 		return []*resourceSpec{
 			{
-				id:    bucket,
 				arn:   fmt.Sprintf("arn:aws:s3:::%s/*", bucket),
 				rType: bucketType,
 			},
 			{
-				id:    bucket,
 				arn:   fmt.Sprintf("arn:aws:s3:::%s", bucket),
 				rType: bucketType,
 			},
@@ -411,14 +391,9 @@ func (wh *AccountWarehouse) determineResourceSpecs(params *ResourceParams) ([]*r
 		if !ok {
 			return nil, fmt.Errorf("no cluster specified")
 		}
-		clusterName, err := extractClusterName(clusterARN)
-		if err != nil {
-			return nil, err
-		}
 		clusterSpec := &resourceSpec{
 			rType: otherRType,
 			arn:   clusterARN,
-			id:    clusterName,
 		}
 		dbUser := convertDamUserIDtoAwsName(params.UserID, wh.svcUserName)
 		dbUserARN, err := calculateDBuserARN(clusterARN, dbUser)
@@ -428,25 +403,37 @@ func (wh *AccountWarehouse) determineResourceSpecs(params *ResourceParams) ([]*r
 		userSpec := &resourceSpec{
 			rType: otherRType,
 			arn:   dbUserARN,
-			id:    dbUser,
 		}
 		group, ok := params.Vars["group"]
 		if ok {
-			dbGroupName, err := extractDBGroupName(group)
-			if err != nil {
-				return nil, err
-			}
 			return []*resourceSpec{
 				clusterSpec,
 				userSpec,
 				{
 					rType: otherRType,
 					arn:   group,
-					id:    dbGroupName,
 				},
 			}, nil
 		}
 		return []*resourceSpec{clusterSpec, userSpec}, nil
+	case RedshiftConsoleItemFormat:
+		packedResources, ok := params.Vars["resources"]
+		var resources []string
+		if ok {
+			resources = strings.Split(packedResources, ";")
+		} else {
+			resources = []string{"*"}
+		}
+
+		var specs []*resourceSpec
+		for _, res := range resources {
+			specs = append(specs, &resourceSpec{
+				rType: otherRType,
+				arn:   res,
+			})
+		}
+
+		return specs, nil
 
 	default:
 		return nil, fmt.Errorf("unrecognized item format [%s] for AWS target adapter", params.ServiceTemplate.ServiceName)
