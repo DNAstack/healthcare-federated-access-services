@@ -66,6 +66,7 @@ type resourceType int
 const (
 	otherRType resourceType = iota
 	bucketType
+	clusterUserType
 )
 
 const (
@@ -276,7 +277,6 @@ type ResourceParams struct {
 type resourceSpec struct {
 	rType      resourceType
 	arn        string
-	userScoped bool
 }
 
 type principalSpec struct {
@@ -309,7 +309,7 @@ func (spec *policySpec) getID() string {
 func (spec *policySpec) sessionScoped() bool {
 	if spec.credSpec.principalSpec.pType == roleType {
 		for _, rSpec:= range spec.rSpecs {
-			if rSpec.userScoped {
+			if rSpec.rType == clusterUserType {
 				return true
 			}
 		}
@@ -412,9 +412,8 @@ func (wh *AccountWarehouse) determineResourceSpecs(params *ResourceParams) ([]*r
 			return nil, err
 		}
 		userSpec := &resourceSpec{
-			rType:      otherRType,
+			rType:      clusterUserType,
 			arn:        dbUserARN,
-			userScoped: true,
 		}
 		group, ok := params.Vars["group"]
 		if ok {
@@ -487,11 +486,9 @@ func (wh *AccountWarehouse) determinePrincipalSpec(credSpec *credentialSpec) *pr
 }
 
 func (wh *AccountWarehouse) ensureTokenResult(ctx context.Context, principalARN string, polSpec *policySpec) (*ResourceTokenResult, error) {
-	if !polSpec.sessionScoped() {
-		err := wh.ensureGlobalPolicy(polSpec)
-		if err != nil {
-			return nil, err
-		}
+	err := wh.ensureIdentityPolicy(polSpec)
+	if err != nil {
+		return nil, err
 	}
 
 	switch polSpec.credSpec.cType {
@@ -562,7 +559,7 @@ func(wh *AccountWarehouse) ensurePrincipal(princSpec *principalSpec) (string, er
 	return wh.ensureUser(princSpec)
 }
 
-func(wh *AccountWarehouse) ensureGlobalPolicy(spec *policySpec) error {
+func(wh *AccountWarehouse) ensureIdentityPolicy(spec *policySpec) error {
 	if len(spec.rSpecs) == 0 {
 		return fmt.Errorf("cannot have policy without any resources")
 	}
@@ -594,6 +591,12 @@ func(wh *AccountWarehouse) assumeRole(polSpec *policySpec) (*sts.AssumeRoleOutpu
 	sessionName := convertDamUserIDtoAwsName(params.UserID, wh.svcUserName)
 
 	var sessPolicy *string = nil
+	/*
+	 Session scope policy restricts permissions granted by identity policy on roles.
+	 Read more here: https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies.html#policies_session
+	 We need this for resources like redshift dbuser where we want to use a role, but each session only should get
+	 access for a particular db user
+	*/
 	if polSpec.sessionScoped() {
 		policyJSON, err := convertToPolicyJSON(polSpec)
 		if err != nil {
@@ -691,6 +694,10 @@ type statement struct {
 }
 
 func(wh *AccountWarehouse) ensureRolePolicy(spec *policySpec) error {
+	spec, err := widenUserScopedResources(*spec)
+	if err != nil {
+		return fmt.Errorf("unable to generate role policy: %v", err)
+	}
 	// TODO: handle policy versioning
 	policyJSON, err := convertToPolicyJSON(spec)
 	if err != nil {
@@ -699,6 +706,41 @@ func(wh *AccountWarehouse) ensureRolePolicy(spec *policySpec) error {
 
 	f := func() error { return wh.putRolePolicy(spec, string(policyJSON)) }
 	return backoff.Retry(f, exponentialBackoff)
+}
+
+func widenUserScopedResources(spec policySpec) (*policySpec, error) {
+	rSpecs := make([]*resourceSpec, len(spec.rSpecs))
+	for i, rSpec:= range spec.rSpecs {
+		if rSpec.rType == clusterUserType {
+			orig := spec.rSpecs[i]
+			widened := *orig
+			arnParts := strings.SplitN(orig.arn, ":", 7)
+			if len(arnParts) != 7 {
+				return nil, fmt.Errorf("given arn is not a cluster DB user: %s", orig.arn)
+			}
+			dbUserParts := strings.SplitN(arnParts[6], "/", 2)
+			if len(dbUserParts) != 2 {
+				return nil, fmt.Errorf("given arn is not a cluster DB user: %s", orig.arn)
+			}
+
+			widened.arn = fmt.Sprintf(
+				"%s:%s:%s:%s:%s:%s:%s/*",
+				arnParts[0],
+				arnParts[1],
+				arnParts[2],
+				arnParts[3],
+				arnParts[4],
+				arnParts[5],
+				dbUserParts[0],
+			)
+			rSpecs[i] = &widened
+		} else {
+			rSpecs[i] = spec.rSpecs[i]
+		}
+	}
+	spec.rSpecs = rSpecs
+
+	return &spec, nil
 }
 
 func convertToPolicyJSON(spec *policySpec) ([]byte, error) {

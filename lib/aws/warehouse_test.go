@@ -111,25 +111,29 @@ func TestAWS_MintTokenWithShortLivedTTL_Redshift(t *testing.T) {
 	expectedRoleName := fmt.Sprintf("%s,%s,%s@%s", params.DamResourceID, params.DamViewID, params.DamRoleID, damPrincipalID)
 	expectedRoleArn := fmt.Sprintf("arn:aws:iam::%s:role/ddap/%s", awsAccount, expectedRoleName)
 	validateMintedRoleCredentials(t, awsAccount, expectedRoleArn, result, err)
+	validateCreatedRolePolicy(t, apiClient, expectedRoleName, params.TargetRoles)
 
-	if len(apiClient.Roles) != 1 {
-		t.Errorf("expected a single role to be created but found %v", apiClient.Roles)
-	} else {
-		role := apiClient.Roles[0]
-		if *role.RoleName != expectedRoleName {
-			t.Errorf("expected created role name to be [%s] but was [%s]", expectedRoleName, *role.RoleName)
-		}
+	dbUserArn := "arn:aws:redshift:us-east-1:12345678:dbuser:test-cluster/ic_abc123@dam-user-id"
+	wildcardUserArn := "arn:aws:redshift:us-east-1:12345678:dbuser:test-cluster/*"
+	policyDoc := *apiClient.RolePolicies[0].PolicyDocument
+	if strings.Contains(policyDoc, dbUserArn) {
+		t.Errorf("policy doc for role policy shouldn't reference specific db user: %s", policyDoc)
 	}
-
-	if len(apiClient.RolePolicies) != 0 {
-		t.Errorf("expected a no global role policy to be created but found %v", apiClient.RolePolicies)
+	if !strings.Contains(policyDoc, wildcardUserArn) {
+		t.Errorf("policy doc for role policy should reference wildcard db user: %s", policyDoc)
 	}
 
 	if len(apiClient.AssumedRoles) != 1 {
-		t.Errorf("expected a single role to be assumed but found %v", apiClient.AssumedRoles)
-	} else {
-		assumedRoleInput := apiClient.AssumedRoles[0]
-		validatePolicyDoc(t, params.TargetRoles, assumedRoleInput.Policy)
+		t.Fatalf("expected a single role to be assumed but found %v", apiClient.AssumedRoles)
+	}
+
+	assumedRoleInput := apiClient.AssumedRoles[0]
+	validatePolicyDoc(t, params.TargetRoles, assumedRoleInput.Policy)
+	if strings.Contains(*assumedRoleInput.Policy, wildcardUserArn) {
+		t.Errorf("policy doc for role policy shouldn't reference wildcard db user: %s", *assumedRoleInput.Policy)
+	}
+	if !strings.Contains(*assumedRoleInput.Policy, dbUserArn) {
+		t.Errorf("policy doc for role policy should reference specific db user: %s", *assumedRoleInput.Policy)
 	}
 }
 
@@ -422,7 +426,7 @@ func validateMintedUsernamePassword(t *testing.T, expectedAccount, expectedPrinc
 
 func validateCreatedRolePolicy(t *testing.T, apiClient *MockAwsClient, expectedRoleName string, targetRoles []string) {
 	if len(apiClient.Roles) != 1 {
-		t.Errorf("expected a single role to be created but found %v", apiClient.Roles)
+		t.Fatalf("expected a single role to be created but found %v", apiClient.Roles)
 	} else {
 		role := apiClient.Roles[0]
 		if *role.RoleName != expectedRoleName {
@@ -431,11 +435,11 @@ func validateCreatedRolePolicy(t *testing.T, apiClient *MockAwsClient, expectedR
 	}
 
 	if len(apiClient.RolePolicies) != 1 {
-		t.Errorf("expected a single role policy to be created but found %v", apiClient.RolePolicies)
+		t.Fatalf("expected a single role policy to be created but found %v", apiClient.RolePolicies)
 	} else {
 		policy := apiClient.RolePolicies[0]
 		if *policy.RoleName != expectedRoleName {
-			t.Errorf("expected policy to be created for role [%s] but was created for role [%s]",
+			t.Fatalf("expected policy to be created for role [%s] but was created for role [%s]",
 				expectedRoleName,
 				*policy.RoleName)
 		}
@@ -446,8 +450,7 @@ func validateCreatedRolePolicy(t *testing.T, apiClient *MockAwsClient, expectedR
 
 func validatePolicyDoc(t *testing.T, targetRoles []string, policyDoc *string) {
 	if policyDoc == nil {
-		t.Errorf("expected a session policy but none found")
-		return
+		t.Fatalf("expected a policy doc but none found")
 	}
 
 	for _, targetRole := range targetRoles {
