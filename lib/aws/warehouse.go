@@ -380,6 +380,18 @@ func (wh *AccountWarehouse) MintTokenWithTTL(ctx context.Context, params *Resour
 	return wh.ensureTokenResult(ctx, principalARN, polSpec)
 }
 
+func removeDuplicatesUnordered(elements []string) []string {
+	encountered := map[string]bool{}
+	for v:= range elements {
+		encountered[elements[v]] = true
+	}
+	var result []string
+	for key, _ := range encountered {
+		result = append(result, key)
+	}
+	return result
+}
+
 func (wh *AccountWarehouse) determineResourceSpecs(params *ResourceParams) ([]*resourceSpec, error) {
 	switch params.ServiceTemplate.ServiceName {
 	case S3ItemFormat:
@@ -387,16 +399,28 @@ func (wh *AccountWarehouse) determineResourceSpecs(params *ResourceParams) ([]*r
 		if !ok {
 			return nil, fmt.Errorf("no bucket specified")
 		}
-		return []*resourceSpec{
-			{
-				arn:   fmt.Sprintf("arn:aws:s3:::%s/*", bucket),
+		paths, ok := params.Vars["paths"]
+		if !ok || paths == "" || paths == "*" || paths == "/*" {
+			return []*resourceSpec{
+				{
+					arn:   fmt.Sprintf("arn:aws:s3:::%s/*", bucket),
+					rType: bucketType,
+				},
+				{
+					arn:   fmt.Sprintf("arn:aws:s3:::%s", bucket),
+					rType: bucketType,
+				},
+			}, nil
+		}
+		uniquePaths := removeDuplicatesUnordered(strings.Split(paths, ";"))
+		var resourceSpecs []*resourceSpec
+		for i := range uniquePaths {
+			resourceSpecs = append(resourceSpecs, &resourceSpec{
+				arn:   fmt.Sprintf("arn:aws:s3:::%s%s", bucket, uniquePaths[i]),
 				rType: bucketType,
-			},
-			{
-				arn:   fmt.Sprintf("arn:aws:s3:::%s", bucket),
-				rType: bucketType,
-			},
-		}, nil
+			})
+		}
+		return resourceSpecs, nil
 	case RedshiftItemFormat:
 		clusterARN, ok := params.Vars["cluster"]
 		if !ok {

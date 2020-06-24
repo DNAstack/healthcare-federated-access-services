@@ -30,14 +30,18 @@ import (
 
 // end Mock AWS Client
 
-func NewMockBucketParams(ttl time.Duration) *ResourceParams {
+func NewMockBucketParams(ttl time.Duration, paths *string) *ResourceParams {
+	var vars = map[string]string{"bucket": "test-bucket-name"}
+	if paths != nil {
+		vars["paths"] = *paths
+	}
 	return &ResourceParams{
 		UserID:                "ic_abc123|fake-ic",
 		TTL:                   ttl,
 		MaxKeyTTL:             (24 * 30) * time.Hour,
 		ManagedKeysPerAccount: 2,
-		Vars:                  map[string]string{"bucket": "test-bucket-name"},
-		TargetRoles:           []string{"s3:GetObject"},
+		Vars:                  vars,
+		TargetRoles:           []string{"s3:GetObject", "s3:GetBucketLocation"},
 		TargetScopes:          []string{},
 		DamResourceID:         "res-id",
 		DamViewID:             "view-id",
@@ -89,7 +93,7 @@ func TestAWS_MintTokenWithShortLivedTTL_Bucket(t *testing.T) {
 	awsAccount := "12345678"
 	apiClient := NewMockAPIClient(awsAccount, damPrincipalID)
 	wh, _ := NewWarehouse(context.Background(), apiClient)
-	params := NewMockBucketParams(time.Hour)
+	params := NewMockBucketParams(time.Hour, nil)
 
 	result, err := wh.MintTokenWithTTL(context.Background(), params)
 
@@ -97,6 +101,55 @@ func TestAWS_MintTokenWithShortLivedTTL_Bucket(t *testing.T) {
 	expectedRoleArn := fmt.Sprintf("arn:aws:iam::%s:role/ddap/%s", awsAccount, expectedRoleName)
 	validateMintedRoleCredentials(t, awsAccount, expectedRoleArn, result, err)
 	validateCreatedRolePolicy(t, apiClient, expectedRoleName, params.TargetRoles)
+}
+
+func TestAWS_MintTokenWithShortLivedTTL_BucketWithUndefinedPaths(t *testing.T) {
+	damPrincipalID := "dam-user-id"
+	awsAccount := "12345678"
+	apiClient := NewMockAPIClient(awsAccount, damPrincipalID)
+	wh, _ := NewWarehouse(context.Background(), apiClient)
+	params := NewMockBucketParams(time.Hour, nil)
+
+	result, err := wh.MintTokenWithTTL(context.Background(), params)
+
+	expectedRoleName := fmt.Sprintf("%s,%s,%s@%s", params.DamResourceID, params.DamViewID, params.DamRoleID, damPrincipalID)
+	expectedRoleArn := fmt.Sprintf("arn:aws:iam::%s:role/ddap/%s", awsAccount, expectedRoleName)
+	validateMintedRoleCredentials(t, awsAccount, expectedRoleArn, result, err)
+	validateCreatedRolePolicy(t, apiClient, expectedRoleName, params.TargetRoles)
+
+	policy := apiClient.RolePolicies[0]
+	policyDoc := policy.PolicyDocument
+	expectedResourcePaths := []string{
+		fmt.Sprintf("arn:aws:s3:::%s/*", params.Vars["bucket"]),
+		fmt.Sprintf("arn:aws:s3:::%s", params.Vars["bucket"]),
+	}
+	validatePolicyResourceARNs(t, expectedResourcePaths, policyDoc)
+}
+
+func TestAWS_MintTokenWithShortLivedTTL_BucketWithDefinedPaths(t *testing.T) {
+	damPrincipalID := "dam-user-id"
+	awsAccount := "12345678"
+	apiClient := NewMockAPIClient(awsAccount, damPrincipalID)
+	wh, _ := NewWarehouse(context.Background(), apiClient)
+	path1 := "/path/to/object1.txt"
+	path2 := "/path/to/objects/*"
+	paths := fmt.Sprintf("%s;%s", path1, path2)
+	params := NewMockBucketParams(time.Hour, &paths)
+
+	result, err := wh.MintTokenWithTTL(context.Background(), params)
+
+	expectedRoleName := fmt.Sprintf("%s,%s,%s@%s", params.DamResourceID, params.DamViewID, params.DamRoleID, damPrincipalID)
+	expectedRoleArn := fmt.Sprintf("arn:aws:iam::%s:role/ddap/%s", awsAccount, expectedRoleName)
+	validateMintedRoleCredentials(t, awsAccount, expectedRoleArn, result, err)
+	validateCreatedRolePolicy(t, apiClient, expectedRoleName, params.TargetRoles)
+
+	policy := apiClient.RolePolicies[0]
+	policyDoc := policy.PolicyDocument
+	expectedResourcePaths := []string{
+		fmt.Sprintf("arn:aws:s3:::%s%s", params.Vars["bucket"], path1),
+		fmt.Sprintf("arn:aws:s3:::%s%s", params.Vars["bucket"], path2),
+	}
+	validatePolicyResourceARNs(t, expectedResourcePaths, policyDoc)
 }
 
 func TestAWS_MintTokenWithShortLivedTTL_Redshift(t *testing.T) {
@@ -143,7 +196,7 @@ func TestAWS_MintTokenWithLongLivedTTL_Bucket(t *testing.T) {
 	apiClient := NewMockAPIClient(awsAccount, damPrincipalID)
 	wh, _ := NewWarehouse(context.Background(), apiClient)
 	// AWS has 12-hour threshold for role access tokens
-	params := NewMockBucketParams(13 * time.Hour)
+	params := NewMockBucketParams(13 * time.Hour, nil)
 
 	result, err := wh.MintTokenWithTTL(context.Background(), params)
 
@@ -174,7 +227,7 @@ func TestAWS_MintTokenWithHumanAccess_Bucket(t *testing.T) {
 	damPrincipalID := "dam-user-id"
 	apiClient := NewMockAPIClient(awsAccount, damPrincipalID)
 	wh, _ := NewWarehouse(context.Background(), apiClient)
-	params := NewMockBucketParams(1 * time.Hour)
+	params := NewMockBucketParams(1 * time.Hour, nil)
 	params.DamInterfaceID = HumanInterfacePrefix + "s3"
 
 	result, err := wh.MintTokenWithTTL(context.Background(), params)
@@ -190,7 +243,7 @@ func TestAWS_MintTokenWithHumanAccessConsecutively_Bucket(t *testing.T) {
 	damPrincipalID := "dam-user-id"
 	apiClient := NewMockAPIClient(awsAccount, damPrincipalID)
 	wh, _ := NewWarehouse(context.Background(), apiClient)
-	params := NewMockBucketParams(1 * time.Hour)
+	params := NewMockBucketParams(1 * time.Hour, nil)
 	params.DamInterfaceID = HumanInterfacePrefix + "s3"
 
 	expectedUserName := "ic_abc123@" + damPrincipalID
@@ -213,7 +266,7 @@ func TestAWS_ManageAccountKeys_BelowMax(t *testing.T) {
 	wh, _ := NewWarehouse(context.Background(), apiClient)
 
 	// AWS has 12-hour threshold for role access tokens
-	params := NewMockBucketParams(13 * time.Hour)
+	params := NewMockBucketParams(13 * time.Hour, nil)
 	for i := 0; i < params.ManagedKeysPerAccount; i++ {
 		_, err := wh.MintTokenWithTTL(context.Background(), params)
 		if err != nil {
@@ -246,7 +299,7 @@ func TestAWS_ManageAccountKeys_AboveThreshold(t *testing.T) {
 	wh, _ := NewWarehouse(context.Background(), apiClient)
 
 	// AWS has 12-hour threshold for role access tokens
-	params := NewMockBucketParams(13 * time.Hour)
+	params := NewMockBucketParams(13 * time.Hour, nil)
 	for i := 0; i < params.ManagedKeysPerAccount; i++ {
 		_, err := wh.MintTokenWithTTL(context.Background(), params)
 		if err != nil {
@@ -295,7 +348,7 @@ func TestAWS_ManageAccountKeys_Expired(t *testing.T) {
 	wh, _ := NewWarehouse(context.Background(), apiClient)
 
 	// AWS has 12-hour threshold for role access tokens
-	params := NewMockBucketParams(13 * time.Hour)
+	params := NewMockBucketParams(13 * time.Hour, nil)
 	_, err := wh.MintTokenWithTTL(context.Background(), params)
 	if err != nil {
 		t.Errorf("prerequisite failed: error minting token: %v", err)
@@ -457,6 +510,21 @@ func validatePolicyDoc(t *testing.T, targetRoles []string, policyDoc *string) {
 		if !strings.Contains(*policyDoc, targetRole) {
 			t.Errorf("expected policy document to contain target role [%s] but this was the policy document:\n%s",
 				targetRole,
+				*policyDoc)
+		}
+	}
+}
+
+func validatePolicyResourceARNs(t *testing.T, expectedResourceARNs []string, policyDoc *string) {
+	if policyDoc == nil {
+		t.Errorf("expected a session policy but none found")
+		return
+	}
+
+	for _, arn := range expectedResourceARNs {
+		if !strings.Contains(*policyDoc, arn) {
+			t.Errorf("expected policy document to contain resource with ARN [%s] but this was the policy document:\n%s",
+				arn,
 				*policyDoc)
 		}
 	}
