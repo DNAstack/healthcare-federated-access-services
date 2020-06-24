@@ -2,7 +2,22 @@
 
 ## [Unreleased](https://github.com/GoogleCloudPlatform/healthcare-federated-access-services/tree/HEAD)
 
-[Full Changelog](https://github.com/GoogleCloudPlatform/healthcare-federated-access-services/compare/v0.9.5...HEAD)
+[Full Changelog](https://github.com/GoogleCloudPlatform/healthcare-federated-access-services/compare/v0.9.6...HEAD)
+
+## [v0.9.6](https://github.com/GoogleCloudPlatform/healthcare-federated-access-services/tree/v0.9.6)
+
+[Full Changelog](https://github.com/GoogleCloudPlatform/healthcare-federated-access-services/compare/v0.9.5...v0.9.6)
+
+**Highlight Updates**
+
+* Support scim user endpoint on DAM
+* Support "filter" in auditlogs:
+
+  * add filter "decision". example: decision = "PASS" or decision = "FAIL"
+
+**Migration**
+
+* Update traffic router for dam to expose `/identity/scim` scim endpoints on DAM. [example](https://github.com/GoogleCloudPlatform/healthcare-federated-access-services/blob/master/deploy/build-templates/dam/nginx.conf)
 
 ## [v0.9.5](https://github.com/GoogleCloudPlatform/healthcare-federated-access-services/tree/v0.9.5)
 
