@@ -460,7 +460,7 @@ func (s *Service) createOrUpdateAccount(ctx context.Context, r *http.Request, id
 	if err != nil {
 		return "", status.Errorf(codes.Unavailable, "%v", err)
 	}
-	if lookup != nil {
+	if lookup != nil && lookup.State != storage.StateDisabled {
 		subject := lookup.Subject
 		acct, _, err := s.scim.LoadAccount(subject, realm, true, tx)
 		if err != nil {
@@ -476,7 +476,7 @@ func (s *Service) createOrUpdateAccount(ctx context.Context, r *http.Request, id
 			return "", err
 		}
 
-		if err := s.scim.SaveAccount(nil, acct, "REFRESH claims "+id.Subject, r, id.Subject, tx); err != nil {
+		if err := s.scim.SaveAccount(nil, acct, "REFRESH claims "+id.Subject, id.Subject, realm, r, tx); err != nil {
 			return "", status.Errorf(codes.Unavailable, "%v", err)
 		}
 
@@ -490,7 +490,7 @@ func (s *Service) createOrUpdateAccount(ctx context.Context, r *http.Request, id
 		return "", err
 	}
 
-	if err := s.scim.SaveAccount(nil, acct, "Create Account", r, id.Subject, tx); err != nil {
+	if err := s.scim.SaveAccount(nil, acct, "Create Account", id.Subject, realm, r, tx); err != nil {
 		return "", fmt.Errorf("service dependencies not available; try again later")
 	}
 	if err := s.scim.SaveAccountLookup(lookup, realm, id.Subject, r, id, tx); err != nil {
