@@ -42,7 +42,11 @@ func GetLoginRequest(client *http.Client, hydraAdminURL, challenge string) (*hyd
 
 // AcceptLogin tells hydra to accept a login request.
 func AcceptLogin(client *http.Client, hydraAdminURL, challenge string, r *hydraapi.HandledLoginRequest) (*hydraapi.RequestHandlerResponse, error) {
-	fmt.Printf("Accepting login request for challenge [%s]: %+v\n", challenge, r)
+	if r != nil && r.Subject != nil {
+		fmt.Printf("Accepting login request for challenge [%s] for subject [%s]\n", challenge, *r.Subject)
+	} else {
+		fmt.Printf("Accepting login request for challenge [%s] with missing request or subject\n", challenge)
+	}
 	u := putURL(hydraAdminURL, "login", "accept", url.QueryEscape(challenge))
 	resp := &hydraapi.RequestHandlerResponse{}
 	err := httpPut(client, u, r, resp)
