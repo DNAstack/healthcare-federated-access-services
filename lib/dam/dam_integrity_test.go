@@ -19,7 +19,7 @@ import (
 
 	"google.golang.org/grpc/codes" /* copybara-comment */
 	"github.com/golang/protobuf/proto" /* copybara-comment */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/aws"
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/aws" /* copybara-comment: aws */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/dam" /* copybara-comment: dam */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage" /* copybara-comment: storage */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/test/fakeoidcissuer" /* copybara-comment: fakeoidcissuer */

@@ -22,11 +22,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/aws"
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/clouds"
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/kms"
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage"
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh"       /* copybara-comment: ga4gh */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/aws" /* copybara-comment: aws */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/clouds" /* copybara-comment: clouds */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh" /* copybara-comment: ga4gh */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/globalflags" /* copybara-comment: globalflags */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/httputils"   /* copybara-comment: httputils */
 	pb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/dam/v1" /* copybara-comment: go_proto */

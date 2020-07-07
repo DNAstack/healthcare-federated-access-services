@@ -23,9 +23,9 @@ import (
 	"testing"
 	"time"
 
-	v1 "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/dam/v1"
+	"github.com/aws/aws-sdk-go/aws" /* copybara-comment */
 
-	"github.com/aws/aws-sdk-go/aws"
+	v1 "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/dam/v1"
 )
 
 // end Mock AWS Client

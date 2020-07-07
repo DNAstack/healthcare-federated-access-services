@@ -24,17 +24,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/clouds"
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/timeutil"
-	pb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/dam/v1" /* copybara-comment: go_proto */
-
 	"github.com/google/uuid"
 	"github.com/aws/aws-sdk-go/aws" /* copybara-comment */
 	"github.com/aws/aws-sdk-go/aws/awserr" /* copybara-comment */
 	"github.com/aws/aws-sdk-go/service/iam" /* copybara-comment */
 	"github.com/aws/aws-sdk-go/service/sts" /* copybara-comment */
 	"github.com/cenkalti/backoff" /* copybara-comment */
-	"github.com/golang/glog"
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/clouds" /* copybara-comment: clouds */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/timeutil" /* copybara-comment: timeutil */
+
+	glog "github.com/golang/glog" /* copybara-comment */
+	pb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/dam/v1" /* copybara-comment: go_proto */
 )
 
 const (

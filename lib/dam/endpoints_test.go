@@ -20,7 +20,7 @@ import (
 	"github.com/google/go-cmp/cmp" /* copybara-comment */
 	"github.com/gorilla/mux" /* copybara-comment */
 	"bitbucket.org/creachadair/stringset" /* copybara-comment */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/aws"
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/aws" /* copybara-comment: aws */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/hydraproxy" /* copybara-comment: hydraproxy */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage" /* copybara-comment: storage */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/test/fakeoidcissuer" /* copybara-comment: fakeoidcissuer */

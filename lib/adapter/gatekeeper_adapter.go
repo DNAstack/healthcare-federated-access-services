@@ -19,12 +19,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh"     /* copybara-comment: ga4gh */
+	"github.com/pborman/uuid" /* copybara-comment */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh" /* copybara-comment: ga4gh */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/httputils" /* copybara-comment: httputils */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/kms"       /* copybara-comment: kms */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/srcutil"   /* copybara-comment: srcutil */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/timeutil"  /* copybara-comment: timeutil */
-	"github.com/pborman/uuid"                                                           /* copybara-comment */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/kms" /* copybara-comment: kms */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/srcutil" /* copybara-comment: srcutil */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/timeutil" /* copybara-comment: timeutil */
 
 	pb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/dam/v1" /* copybara-comment: go_proto */
 )

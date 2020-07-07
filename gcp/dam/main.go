@@ -28,7 +28,7 @@ import (
 	"cloud.google.com/go/kms/apiv1" /* copybara-comment: kms */
 	"cloud.google.com/go/logging" /* copybara-comment: logging */
 	"github.com/gorilla/mux" /* copybara-comment */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/aws"
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/aws" /* copybara-comment: aws */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/dam" /* copybara-comment: dam */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/dsstore" /* copybara-comment: dsstore */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/grpcutil" /* copybara-comment: grpcutil */

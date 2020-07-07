@@ -1,3 +1,17 @@
+// Copyright 2020 Google LLC.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package adapter
 
 import (
@@ -5,14 +19,15 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/aws"
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/clouds"
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/aws" /* copybara-comment: aws */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/clouds" /* copybara-comment: clouds */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh" /* copybara-comment: ga4gh */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/processgc"
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/srcutil"
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage"
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/processgc" /* copybara-comment: processgc */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/srcutil" /* copybara-comment: srcutil */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage" /* copybara-comment: storage */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/timeutil" /* copybara-comment: timeutil */
-	pb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/dam/v1"
+
+	pb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/dam/v1" /* copybara-comment: go_proto */
 )
 
 const (
@@ -21,7 +36,7 @@ const (
 	platformName   = "aws"
 )
 
-//FIXME need to be moved to config, also the values
+// TODO: need to be moved to config, also the values
 const (
 	defaultGcFrequency    = 1 * 24 * time.Hour /* 1 day */
 	defaultKeysPerAccount = 2

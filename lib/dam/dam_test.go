@@ -39,9 +39,9 @@ import (
 	"github.com/golang/protobuf/proto" /* copybara-comment */
 	"google.golang.org/protobuf/testing/protocmp" /* copybara-comment */
 	"bitbucket.org/creachadair/stringset" /* copybara-comment */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/aws"
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/apis/hydraapi" /* copybara-comment: hydraapi */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/auditlog" /* copybara-comment: auditlog */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/aws" /* copybara-comment: aws */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/clouds" /* copybara-comment: clouds */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/errutil" /* copybara-comment: errutil */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh" /* copybara-comment: ga4gh */
@@ -973,7 +973,7 @@ func TestConfig_Add_NilResource(t *testing.T) {
 		DefaultBroker:  testBroker,
 		Store:          store,
 		Warehouse:      wh,
-		AWSClient: 		awsClient,
+		AWSClient:      awsClient,
 		UseHydra:       useHydra,
 		HydraAdminURL:  hydraAdminURL,
 		HydraPublicURL: hydraPublicURL,
@@ -1064,7 +1064,7 @@ func setupAuthorizationTest(t *testing.T) *authTestContext {
 		DefaultBroker:  "no-broker",
 		Store:          store,
 		Warehouse:      nil,
-		AWSClient: 		awsClient,
+		AWSClient:      awsClient,
 		UseHydra:       useHydra,
 		HydraAdminURL:  hydraAdminURL,
 		HydraPublicURL: hydraPublicURL,
@@ -1332,7 +1332,7 @@ func Test_populateIdentityVisas_oidc_and_jku(t *testing.T) {
 		ServiceName:    "dam",
 		DefaultBroker:  testBroker,
 		Store:          store,
-		AWSClient: 		awsClient,
+		AWSClient:      awsClient,
 		UseHydra:       useHydra,
 		HydraAdminURL:  hydraAdminURL,
 		HydraPublicURL: hydraPublicURL,
@@ -1468,7 +1468,7 @@ func setupHydraTest(readOnlyMasterRealm bool) (*Service, *pb.DamConfig, *pb.DamS
 		DefaultBroker:  testBroker,
 		Store:          store,
 		Warehouse:      wh,
-		AWSClient: 		awsClient,
+		AWSClient:      awsClient,
 		UseHydra:       useHydra,
 		HydraAdminURL:  hydraAdminURL,
 		HydraPublicURL: hydraPublicURL,

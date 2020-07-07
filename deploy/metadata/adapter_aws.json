@@ -89,7 +89,7 @@
          "serviceVariables": {
             "roles": {
                "type": "const",
-               "regexp": "^.*$",
+               "regexp": "^[*]|([a-zA-Z0-9]+:[a-zA-Z0-9]*[*]?)$",
                "ui": {
                   "label": "AWS Actions",
                   "description": "AWS action name"
@@ -99,7 +99,7 @@
          "itemVariables": {
             "resources": {
                "type": "split_pattern",
-               "regexp": ".*",
+               "regexp": "^[*]|(arn:.*)$",
                "optional": true,
                "ui": {
                   "label": "AWS resource ARNs",

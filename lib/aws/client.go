@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws" /* copybara-comment */
-	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/awserr" /* copybara-comment */
 	"github.com/aws/aws-sdk-go/aws/session" /* copybara-comment */
 	"github.com/aws/aws-sdk-go/service/iam" /* copybara-comment */
 	"github.com/aws/aws-sdk-go/service/sts" /* copybara-comment */
@@ -209,6 +209,7 @@ func (m *MockAwsClient) ListAccessKeys(input *iam.ListAccessKeysInput) (*iam.Lis
 	}, nil
 }
 
+// DeleteAccessKey ...
 func (m *MockAwsClient) DeleteAccessKey(input *iam.DeleteAccessKeyInput) (*iam.DeleteAccessKeyOutput, error) {
 	for i, key := range m.AccessKeys {
 		if key.AccessKeyId == input.AccessKeyId {
@@ -223,6 +224,7 @@ func (m *MockAwsClient) DeleteAccessKey(input *iam.DeleteAccessKeyInput) (*iam.D
 	return nil, awserr.New(iam.ErrCodeNoSuchEntityException, "shouldn't rely on this message", nil)
 }
 
+// GetCallerIdentity ...
 func (m *MockAwsClient) GetCallerIdentity(_ *sts.GetCallerIdentityInput) (*sts.GetCallerIdentityOutput, error) {
 	return &sts.GetCallerIdentityOutput{
 		Account: &m.Account,
@@ -256,6 +258,7 @@ func (m *MockAwsClient) AssumeRole(input *sts.AssumeRoleInput) (*sts.AssumeRoleO
 	return nil, awserr.New(iam.ErrCodeNoSuchEntityException, "shouldn't depend on this message", nil)
 }
 
+// CreateAccessKey ...
 func (m *MockAwsClient) CreateAccessKey(input *iam.CreateAccessKeyInput) (*iam.CreateAccessKeyOutput, error) {
 	if _, err := m.GetUser(&iam.GetUserInput{UserName: input.UserName}); err != nil {
 		return nil, err
@@ -276,6 +279,7 @@ func (m *MockAwsClient) CreateAccessKey(input *iam.CreateAccessKeyInput) (*iam.C
 	}, nil
 }
 
+// PutRolePolicy ...
 func (m *MockAwsClient) PutRolePolicy(input *iam.PutRolePolicyInput) (*iam.PutRolePolicyOutput, error) {
 	if _, err := m.GetRole(&iam.GetRoleInput{RoleName: input.RoleName}); err != nil {
 		return nil, err
@@ -284,6 +288,7 @@ func (m *MockAwsClient) PutRolePolicy(input *iam.PutRolePolicyInput) (*iam.PutRo
 	return &iam.PutRolePolicyOutput{}, nil
 }
 
+// PutUserPolicy ...
 func (m *MockAwsClient) PutUserPolicy(input *iam.PutUserPolicyInput) (*iam.PutUserPolicyOutput, error) {
 	if _, err := m.GetUser(&iam.GetUserInput{UserName: input.UserName}); err != nil {
 		return nil, err
@@ -292,6 +297,7 @@ func (m *MockAwsClient) PutUserPolicy(input *iam.PutUserPolicyInput) (*iam.PutUs
 	return &iam.PutUserPolicyOutput{}, nil
 }
 
+// GetUser ...
 func (m *MockAwsClient) GetUser(input *iam.GetUserInput) (*iam.GetUserOutput, error) {
 	for _, user := range m.Users {
 		if *input.UserName == *user.UserName {
@@ -304,6 +310,7 @@ func (m *MockAwsClient) GetUser(input *iam.GetUserInput) (*iam.GetUserOutput, er
 	return nil, awserr.New(iam.ErrCodeNoSuchEntityException, "shouldn't depend on this message", nil)
 }
 
+// CreateUser ...
 func (m *MockAwsClient) CreateUser(input *iam.CreateUserInput) (*iam.CreateUserOutput, error) {
 	if user, _ := m.GetUser(&iam.GetUserInput{UserName: input.UserName}); user != nil {
 		return nil, awserr.New(iam.ErrCodeEntityAlreadyExistsException, "shouldn't depend on this message", nil)
@@ -332,6 +339,7 @@ func (m *MockAwsClient) CreateUser(input *iam.CreateUserInput) (*iam.CreateUserO
 	}, nil
 }
 
+// GetRole ...
 func (m *MockAwsClient) GetRole(input *iam.GetRoleInput) (*iam.GetRoleOutput, error) {
 	for _, role := range m.Roles {
 		if *role.RoleName == *input.RoleName {
@@ -344,6 +352,7 @@ func (m *MockAwsClient) GetRole(input *iam.GetRoleInput) (*iam.GetRoleOutput, er
 	return nil, awserr.New(iam.ErrCodeNoSuchEntityException, "shouldn't depend on this message", nil)
 }
 
+// CreateRole ...
 func (m *MockAwsClient) CreateRole(input *iam.CreateRoleInput) (*iam.CreateRoleOutput, error) {
 	if role, _ := m.GetRole(&iam.GetRoleInput{RoleName: input.RoleName}); role != nil {
 		return nil, awserr.New(iam.ErrCodeEntityAlreadyExistsException, "shouldn't depend on this message", nil)

@@ -19,8 +19,9 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/httputils"   /* copybara-comment: httputils */
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/srcutil"     /* copybara-comment: srcutil */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/httputils" /* copybara-comment: httputils */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/srcutil" /* copybara-comment: srcutil */
+
 	pb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/dam/v1" /* copybara-comment: go_proto */
 )
 
