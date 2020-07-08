@@ -1,13 +1,15 @@
 package adapter_test
 
 import (
+	"testing"
+	"time"
+
+	"golang.org/x/net/context"
+
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/adapter"
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/aws"
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh"
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage"
-	"golang.org/x/net/context"
-	"testing"
-	"time"
 
 	pb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/dam/v1"
 )
