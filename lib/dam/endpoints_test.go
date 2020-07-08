@@ -33,10 +33,15 @@ var (
 		// service info
 		"GET /dam",
 
+		// asset path
+		"/dam/static/",
+
 		// login related
 		"GET /dam/login",
 		"GET /dam/consent",
 		"GET /dam/oidc/loggedin",
+		"POST /dam/inforelease/accept",
+		"POST /dam/inforelease/reject",
 		"GET|POST /dam/checkout",
 
 		// proxy hydra token endpoint
@@ -45,6 +50,10 @@ var (
 		// OIDC well-known for gatekeeper tokens
 		"GET /dam/gatekeeper/.well-known/jwks",
 		"GET /dam/gatekeeper/.well-known/openid-configuration",
+
+		// consent management endpoints
+		"GET /dam/v1alpha/{realm}/users/{user}/consents",
+		"DELETE /dam/v1alpha/{realm}/users/{user}/consents/{consent_id}",
 
 		// token management endpoints
 		"GET /dam/v1alpha/users/{user}/tokens",

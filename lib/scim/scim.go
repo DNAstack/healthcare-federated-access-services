@@ -58,6 +58,7 @@ func (s *Scim) LoadAccount(name, realm string, anyState bool, tx storage.Tx) (*c
 	if err != nil {
 		return nil, status, err
 	}
+	// TODO: move state checks to storage package.
 	if acct.State != storage.StateActive && !anyState {
 		return nil, http.StatusNotFound, fmt.Errorf("not found")
 	}

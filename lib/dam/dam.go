@@ -19,7 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/osenv"
+	"html/template"
 	"io"
 	"net/http"
 	"net/mail"
@@ -39,6 +39,7 @@ import (
 	"github.com/golang/protobuf/jsonpb" /* copybara-comment */
 	"github.com/golang/protobuf/proto" /* copybara-comment */
 	"bitbucket.org/creachadair/stringset" /* copybara-comment */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/osenv"
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/adapter" /* copybara-comment: adapter */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/auditlogsapi" /* copybara-comment: auditlogsapi */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/auth" /* copybara-comment: auth */
@@ -80,7 +81,11 @@ const (
 	noClientID          = ""
 	noScope             = ""
 	defaultPersonaScope = ""
-	damStaticService    = "dam-static"
+	assetPath           = "/dam/static"
+	staticFilePath      = "/dam/static/"
+	staticDirectory     = "assets/serve/"
+
+	informationReleasePageFile = "pages/dam/info_release.html"
 )
 
 var (
@@ -95,33 +100,36 @@ var (
 )
 
 type Service struct {
-	adapters            *adapter.ServiceAdapters
-	roleCategories      map[string]*pb.RoleCategory
-	domainURL           string
-	defaultBroker       string
-	serviceName         string
-	hydraAdminURL       string
-	hydraPublicURL      string
-	hydraPublicURLProxy *hydraproxy.Service
-	hydraSyncFreq       time.Duration
-	store               storage.Store
-	warehouse           clouds.ResourceTokenCreator
-	logger              *logging.Client
-	Handler             *ServiceHandler
-	hidePolicyBasis     bool
-	hideRejectDetail    bool
-	httpClient          *http.Client
-	startTime           int64
-	translators         sync.Map
-	visaVerifiers       sync.Map
-	useHydra            bool
-	scim                *scim.Scim
-	tokens              tgrpcpb.TokensServer
-	auditlogs           *auditlogsapi.AuditLogs
-	tokenProviders      []tokensapi.TokenProvider
-	signer              kms.Signer
-	encryption          kms.Encryption
-	checker             *auth.Checker
+	adapters                   *adapter.ServiceAdapters
+	roleCategories             map[string]*pb.RoleCategory
+	domainURL                  string
+	defaultBroker              string
+	serviceName                string
+	hydraAdminURL              string
+	hydraPublicURL             string
+	hydraPublicURLProxy        *hydraproxy.Service
+	hydraSyncFreq              time.Duration
+	store                      storage.Store
+	warehouse                  clouds.ResourceTokenCreator
+	logger                     *logging.Client
+	Handler                    *ServiceHandler
+	hidePolicyBasis            bool
+	hideRejectDetail           bool
+	httpClient                 *http.Client
+	startTime                  int64
+	translators                sync.Map
+	visaVerifiers              sync.Map
+	useHydra                   bool
+	scim                       *scim.Scim
+	tokens                     tgrpcpb.TokensServer
+	auditlogs                  *auditlogsapi.AuditLogs
+	tokenProviders             []tokensapi.TokenProvider
+	signer                     kms.Signer
+	encryption                 kms.Encryption
+	checker                    *auth.Checker
+	skipInformationReleasePage bool
+	infomationReleasePageTmpl  *template.Template
+	consentDashboardURL        string
 }
 
 type ServiceHandler struct {
@@ -142,9 +150,9 @@ type Options struct {
 	// Store: data storage and configuration storage
 	Store storage.Store
 	// Warehouse: resource token creator service
-	Warehouse             clouds.ResourceTokenCreator
+	Warehouse clouds.ResourceTokenCreator
 	// AWSClient: a client for interacting with the AWS API
-	AWSClient	aws.APIClient
+	AWSClient             aws.APIClient
 	ServiceAccountManager *saw.AccountWarehouse
 	// Logger: audit log logger
 	Logger *logging.Client
@@ -152,6 +160,8 @@ type Options struct {
 	SDLC lgrpcpb.LoggingServiceV2Client
 	// AuditLogProject is the GCP project id where audit logs are written to.
 	AuditLogProject string
+	// SkipInformationReleasePage: set true if want to skip the information release page.
+	SkipInformationReleasePage bool
 	// UseHydra: service use hydra integrated OIDC.
 	UseHydra bool
 	// HydraAdminURL: hydra admin endpoints url
@@ -170,6 +180,9 @@ type Options struct {
 	Signer kms.Signer
 	// Encryption: used to encrypt the jwt in account
 	Encryption kms.Encryption
+	// ConsentDashboardURL is url to frontend consent dashboard, will replace
+	// ${USER_ID} with userID.
+	ConsentDashboardURL string
 }
 
 // NewService create DAM service
@@ -189,30 +202,38 @@ func New(r *mux.Router, params *Options) *Service {
 		syncFreq = params.HydraSyncFreq
 	}
 
+	infomationReleasePageTmpl, err := httputils.TemplateFromFiles(informationReleasePageFile)
+	if err != nil {
+		glog.Exitf("cannot create template for information release page: %v", err)
+	}
+
 	sh := &ServiceHandler{}
 	s := &Service{
-		roleCategories:      roleCat.DamRoleCategories,
-		domainURL:           params.Domain,
-		defaultBroker:       params.DefaultBroker,
-		serviceName:         params.ServiceName,
-		store:               params.Store,
-		warehouse:           params.Warehouse,
-		logger:              params.Logger,
-		Handler:             sh,
-		hidePolicyBasis:     params.HidePolicyBasis,
-		hideRejectDetail:    params.HideRejectDetail,
-		httpClient:          params.HTTPClient,
-		startTime:           time.Now().Unix(),
-		useHydra:            params.UseHydra,
-		hydraAdminURL:       params.HydraAdminURL,
-		hydraPublicURL:      params.HydraPublicURL,
-		hydraPublicURLProxy: params.HydraPublicProxy,
-		hydraSyncFreq:       syncFreq,
-		scim:                scim.New(params.Store),
-		tokens:              faketokensapi.NewDAMTokens(params.Store, params.ServiceAccountManager),
-		auditlogs:           auditlogsapi.NewAuditLogs(params.SDLC, params.AuditLogProject, params.ServiceName),
-		signer:              params.Signer,
-		encryption:          params.Encryption,
+		roleCategories:             roleCat.DamRoleCategories,
+		domainURL:                  params.Domain,
+		defaultBroker:              params.DefaultBroker,
+		serviceName:                params.ServiceName,
+		store:                      params.Store,
+		warehouse:                  params.Warehouse,
+		logger:                     params.Logger,
+		Handler:                    sh,
+		hidePolicyBasis:            params.HidePolicyBasis,
+		hideRejectDetail:           params.HideRejectDetail,
+		httpClient:                 params.HTTPClient,
+		startTime:                  time.Now().Unix(),
+		skipInformationReleasePage: params.SkipInformationReleasePage,
+		infomationReleasePageTmpl:  infomationReleasePageTmpl,
+		consentDashboardURL:        params.ConsentDashboardURL,
+		useHydra:                   params.UseHydra,
+		hydraAdminURL:              params.HydraAdminURL,
+		hydraPublicURL:             params.HydraPublicURL,
+		hydraPublicURLProxy:        params.HydraPublicProxy,
+		hydraSyncFreq:              syncFreq,
+		scim:                       scim.New(params.Store),
+		tokens:                     faketokensapi.NewDAMTokens(params.Store, params.ServiceAccountManager),
+		auditlogs:                  auditlogsapi.NewAuditLogs(params.SDLC, params.AuditLogProject, params.ServiceName),
+		signer:                     params.Signer,
+		encryption:                 params.Encryption,
 	}
 
 	if s.httpClient == nil {
@@ -1177,6 +1198,9 @@ func normalizeConfig(cfg *pb.DamConfig) error {
 	if cfg.Clients == nil {
 		cfg.Clients = make(map[string]*cpb.Client)
 	}
+	if cfg.TestPersonas == nil {
+		cfg.TestPersonas = make(map[string]*cpb.TestPersona)
+	}
 	for _, p := range cfg.TestPersonas {
 		sort.Strings(p.Access)
 	}
@@ -1450,6 +1474,10 @@ func (s *Service) clients(tx storage.Tx) (map[string]*cpb.Client, error) {
 
 // TODO: move registeration of endpoints to main package.
 func registerHandlers(r *mux.Router, s *Service) {
+	// static files
+	sfs := http.StripPrefix(staticFilePath, http.FileServer(http.Dir(srcutil.Path(staticDirectory))))
+	r.PathPrefix(staticFilePath).Handler(sfs)
+
 	// info endpoint
 	r.HandleFunc(infoPath, auth.MustWithAuth(s.GetInfo, s.checker, auth.RequireNone)).Methods(http.MethodGet)
 	r.HandleFunc(oidcConfiguarePath, auth.MustWithAuth(s.OidcWellKnownConfig, s.checker, auth.RequireNone)).Methods(http.MethodGet)
@@ -1504,6 +1532,10 @@ func registerHandlers(r *mux.Router, s *Service) {
 	r.HandleFunc(hydraLoginPath, auth.MustWithAuth(s.HydraLogin, s.checker, auth.RequireNone)).Methods(http.MethodGet)
 	r.HandleFunc(hydraConsentPath, auth.MustWithAuth(s.HydraConsent, s.checker, auth.RequireNone)).Methods(http.MethodGet)
 
+	// information release endpoints
+	r.HandleFunc(acceptInformationReleasePath, auth.MustWithAuth(s.AcceptInformationRelease, s.checker, auth.RequireNone)).Methods(http.MethodPost)
+	r.HandleFunc(rejectInformationReleasePath, auth.MustWithAuth(s.RejectInformationRelease, s.checker, auth.RequireNone)).Methods(http.MethodPost)
+
 	// oidc auth callback endpoint
 	r.HandleFunc(loggedInPath, auth.MustWithAuth(s.LoggedInHandler, s.checker, auth.RequireNone)).Methods(http.MethodGet)
 
@@ -1519,6 +1551,11 @@ func registerHandlers(r *mux.Router, s *Service) {
 	r.HandleFunc(fakeTokenPath, auth.MustWithAuth(faketokensapi.NewTokensHandler(s.tokens).DeleteToken, s.checker, auth.RequireUserToken)).Methods(http.MethodDelete)
 
 	// consents service endpoints
+	consentService := s.consentService()
+	r.HandleFunc(listConsentPath, auth.MustWithAuth(handlerfactory.MakeHandler(s.GetStore(), consentsapi.ListConsentsFactory(consentService, listConsentPath)), s.checker, auth.RequireUserToken)).Methods(http.MethodGet)
+	r.HandleFunc(deleteConsentPath, auth.MustWithAuth(handlerfactory.MakeHandler(s.GetStore(), consentsapi.DeleteConsentFactory(consentService, deleteConsentPath, false)), s.checker, auth.RequireUserToken)).Methods(http.MethodDelete)
+
+	// TODO: delete the mocked endpoints when complete.
 	consents := &consentsapi.StubConsents{Consent: consentsapi.FakeConsent}
 	r.HandleFunc(consentsPath, auth.MustWithAuth(consentsapi.NewMockConsentsHandler(consents).ListConsents, s.checker, auth.RequireUserToken)).Methods(http.MethodGet)
 	r.HandleFunc(consentPath, auth.MustWithAuth(consentsapi.NewMockConsentsHandler(consents).DeleteConsent, s.checker, auth.RequireUserToken)).Methods(http.MethodDelete)

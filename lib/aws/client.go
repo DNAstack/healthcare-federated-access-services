@@ -180,10 +180,12 @@ func (m *MockAwsClient) GetLoginProfile(input *iam.GetLoginProfileInput) (*iam.G
 	return nil, awserr.New(iam.ErrCodeNoSuchEntityException, "shouldn't rely on this", nil)
 }
 
+// ListUsers ...
 func (m *MockAwsClient) ListUsers(_ *iam.ListUsersInput) (*iam.ListUsersOutput, error) {
 	panic("implement me")
 }
 
+// ListAccessKeys ...
 func (m *MockAwsClient) ListAccessKeys(input *iam.ListAccessKeysInput) (*iam.ListAccessKeysOutput, error) {
 	if _, err := m.GetUser(&iam.GetUserInput{UserName: input.UserName}); err != nil {
 		return nil, err
@@ -233,6 +235,7 @@ func (m *MockAwsClient) GetCallerIdentity(_ *sts.GetCallerIdentityInput) (*sts.G
 	}, nil
 }
 
+// AssumeRole ...
 func (m *MockAwsClient) AssumeRole(input *sts.AssumeRoleInput) (*sts.AssumeRoleOutput, error) {
 	for _, role := range m.Roles {
 		if *input.RoleArn == *role.Arn {

@@ -214,15 +214,18 @@ type resourceViewRole struct {
 }
 
 type authHandlerIn struct {
-	tokenType       pb.ResourceTokenRequestState_TokenType
-	realm           string
-	stateID         string
-	redirect        string
-	ttl             time.Duration
-	clientID        string
-	responseKeyFile bool
-	resources       []resourceViewRole
-	challenge       string
+	tokenType         pb.ResourceTokenRequestState_TokenType
+	realm             string
+	stateID           string
+	redirect          string
+	ttl               time.Duration
+	clientID          string
+	clientName        string
+	responseKeyFile   bool
+	resources         []resourceViewRole
+	challenge         string
+	requestedAudience []string
+	requestedScope    []string
 }
 
 type authHandlerOut struct {
@@ -336,17 +339,20 @@ func (s *Service) auth(ctx context.Context, in authHandlerIn) (_ *authHandlerOut
 	sID := uuid.New()
 
 	state := &pb.ResourceTokenRequestState{
-		Type:            in.tokenType,
-		ClientId:        in.clientID,
-		State:           in.stateID,
-		Broker:          s.defaultBroker,
-		Redirect:        in.redirect,
-		Ttl:             int64(in.ttl),
-		ResponseKeyFile: in.responseKeyFile,
-		Resources:       list,
-		Challenge:       in.challenge,
-		EpochSeconds:    time.Now().Unix(),
-		Realm:           realm,
+		Type:              in.tokenType,
+		ClientId:          in.clientID,
+		ClientName:        in.clientName,
+		State:             in.stateID,
+		Broker:            s.defaultBroker,
+		Redirect:          in.redirect,
+		Ttl:               int64(in.ttl),
+		ResponseKeyFile:   in.responseKeyFile,
+		Resources:         list,
+		LoginChallenge:    in.challenge,
+		EpochSeconds:      time.Now().Unix(),
+		Realm:             realm,
+		RequestedAudience: in.requestedAudience,
+		RequestedScope:    in.requestedScope,
 	}
 
 	err = s.store.WriteTx(storage.ResourceTokenRequestStateDataType, storage.DefaultRealm, storage.DefaultUser, sID, storage.LatestRev, state, nil, tx)
@@ -398,48 +404,48 @@ func (s *Service) loggedIn(ctx context.Context, in loggedInHandlerIn) (_ *logged
 	}
 
 	if len(in.errStr) > 0 || len(in.errDesc) > 0 {
-		return nil, state.Challenge, errutil.WithErrorReason(in.errStr, status.Errorf(codes.Unauthenticated, in.errDesc))
+		return nil, state.LoginChallenge, errutil.WithErrorReason(in.errStr, status.Errorf(codes.Unauthenticated, in.errDesc))
 	}
 
 	if len(in.authCode) == 0 {
-		return nil, state.Challenge, status.Errorf(codes.InvalidArgument, "no auth code")
+		return nil, state.LoginChallenge, status.Errorf(codes.InvalidArgument, "no auth code")
 	}
 
 	sec, err := s.loadSecrets(tx)
 	if err != nil {
-		return nil, state.Challenge, status.Errorf(codes.Unavailable, err.Error())
+		return nil, state.LoginChallenge, status.Errorf(codes.Unavailable, err.Error())
 	}
 
 	realm := state.Realm
 	cfg, err := s.loadConfig(tx, realm)
 	if err != nil {
-		return nil, state.Challenge, status.Errorf(codes.Unavailable, err.Error())
+		return nil, state.LoginChallenge, status.Errorf(codes.Unavailable, err.Error())
 	}
 
 	broker, ok := cfg.TrustedIssuers[state.Broker]
 	if !ok {
-		return nil, state.Challenge, status.Errorf(codes.InvalidArgument, "unknown identity broker %q", state.Broker)
+		return nil, state.LoginChallenge, status.Errorf(codes.InvalidArgument, "unknown identity broker %q", state.Broker)
 	}
 
 	clientSecret, ok := sec.GetBrokerSecrets()[broker.ClientId]
 	if !ok {
-		return nil, state.Challenge, status.Errorf(codes.FailedPrecondition, "client secret of broker %q is not defined", s.defaultBroker)
+		return nil, state.LoginChallenge, status.Errorf(codes.FailedPrecondition, "client secret of broker %q is not defined", s.defaultBroker)
 	}
 
 	conf := s.oauthConf(state.Broker, broker, clientSecret, []string{})
 	tok, err := conf.Exchange(ctx, in.authCode)
 	if err != nil {
-		return nil, state.Challenge, status.Errorf(codes.Unauthenticated, "token exchange failed. %s", err)
+		return nil, state.LoginChallenge, status.Errorf(codes.Unauthenticated, "token exchange failed. %s", err)
 	}
 
 	id, err := s.upstreamTokenToPassportIdentity(ctx, cfg, tx, tok.AccessToken, broker.ClientId)
 	if err != nil {
-		return nil, state.Challenge, status.Errorf(codes.Unauthenticated, err.Error())
+		return nil, state.LoginChallenge, status.Errorf(codes.Unauthenticated, err.Error())
 	}
 
 	var subject string
 	if subject, err = s.createOrUpdateAccount(ctx, in.r, id, state.Broker, state.Realm, tx); err != nil {
-		return nil, state.Challenge, err
+		return nil, state.LoginChallenge, err
 	}
 
 	// Add the upstream id to identities, and change id subject to dam account subject.
@@ -448,11 +454,11 @@ func (s *Service) loggedIn(ctx context.Context, in loggedInHandlerIn) (_ *logged
 
 	if state.Type == pb.ResourceTokenRequestState_DATASET {
 		out, err := s.loggedInForDatasetToken(ctx, id, state, cfg, in.stateID, realm, tx)
-		return out, state.Challenge, err
+		return out, state.LoginChallenge, err
 	}
 
 	out, err := s.loggedInForEndpointToken(id, state, in.stateID, tx)
-	return out, state.Challenge, err
+	return out, state.LoginChallenge, err
 }
 
 func (s *Service) createOrUpdateAccount(ctx context.Context, r *http.Request, id *ga4gh.Identity, broker, realm string, tx storage.Tx) (string, error) {
@@ -460,7 +466,8 @@ func (s *Service) createOrUpdateAccount(ctx context.Context, r *http.Request, id
 	if err != nil {
 		return "", status.Errorf(codes.Unavailable, "%v", err)
 	}
-	if lookup != nil && lookup.State != storage.StateDisabled {
+	// TODO: move state checks to storage package.
+	if lookup != nil && lookup.State == storage.StateActive {
 		subject := lookup.Subject
 		acct, _, err := s.scim.LoadAccount(subject, realm, true, tx)
 		if err != nil {
@@ -564,14 +571,19 @@ func (s *Service) loggedInForDatasetToken(ctx context.Context, id *ga4gh.Identit
 }
 
 func (s *Service) loggedInForEndpointToken(id *ga4gh.Identity, state *pb.ResourceTokenRequestState, stateID string, tx storage.Tx) (*loggedInHandlerOut, error) {
-	err := s.store.DeleteTx(storage.ResourceTokenRequestStateDataType, storage.DefaultRealm, storage.DefaultUser, stateID, storage.LatestRev, tx)
+	state.Identities = copyIdentities(id)
+	state.Issuer = id.Issuer
+	state.Subject = id.Subject
+
+	err := s.store.WriteTx(storage.ResourceTokenRequestStateDataType, storage.DefaultRealm, storage.DefaultUser, stateID, storage.LatestRev, state, nil, tx)
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, err.Error())
 	}
 
 	return &loggedInHandlerOut{
-		subject:    id.Subject,
-		identities: copyIdentities(id),
+		subject: id.Subject,
+		stateID: stateID,
+		identities: state.Identities,
 	}, nil
 }
 
@@ -734,3 +746,4 @@ func (s *Service) LoggedInHandler(w http.ResponseWriter, r *http.Request) {
 
 	httputils.WriteError(w, status.Errorf(codes.Unimplemented, "oidc service not supported"))
 }
+
