@@ -839,7 +839,9 @@
       },
       "access" : [
         "ga4gh-apis/beacon/discovery",
-        "ga4gh-apis/gcs_read/viewer"
+        "ga4gh-apis/gcs_read/viewer",
+        "ga4gh-apis/redshift-test/dbuser",
+        "ga4gh-apis/s3-test/viewer"
       ]
     },
     "dr_joe_era_commons": {
