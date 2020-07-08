@@ -709,8 +709,8 @@
         "http:aws:s3": "https://s3.amazonaws.com/${bucket}"
       },
       "ui": {
-        "label": "AWS storage",
-        "description": ""
+        "label": "AWS S3",
+        "description": "Offers AWS S3 access"
       }
     },
     "redshift": {
