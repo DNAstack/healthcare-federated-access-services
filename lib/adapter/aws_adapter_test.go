@@ -56,14 +56,14 @@ func TestAwsAdapter(t *testing.T) {
 	s3GrantRole := "viewer"
 	identity := &ga4gh.Identity{
 		Subject: "marc",
-		Issuer:  "https://idp1.org",
+		Issuer:  "https://example.org",
 	}
 	s3SRole, err := adapter.ResolveServiceRole(s3GrantRole, s3View, res, &cfg)
 	if err != nil {
 		t.Fatalf("ResolveServiceRole(%q, view, res, cfg): error %v", s3GrantRole, err)
 	}
 
-	//redshift view test
+	// redshift view test
 	redshiftTmpl := "redshift"
 	redshiftSt := cfg.ServiceTemplates[redshiftTmpl]
 	redshiftVname := "redshift-test"
@@ -79,9 +79,10 @@ func TestAwsAdapter(t *testing.T) {
 	}
 
 	tests := []struct{
-		name   string
-		input  *adapter.Action
-		fail   bool
+		name     string
+		input    *adapter.Action
+		fail     bool
+		errRegex string
 	}{
 		{
 			name: "s3 access token for role",
@@ -97,7 +98,8 @@ func TestAwsAdapter(t *testing.T) {
 				TTL:             1 * time.Hour,
 				View:            s3View,
 			},
-			fail: false,
+			fail:     false,
+			errRegex: "^foo$",
 		},
 		{
 			name: "s3 access token for user",
@@ -114,6 +116,7 @@ func TestAwsAdapter(t *testing.T) {
 				View:            s3View,
 			},
 			fail: false,
+			errRegex: "^foo$",
 		},
 		{
 			name: "s3 too long ttl",
@@ -130,6 +133,7 @@ func TestAwsAdapter(t *testing.T) {
 				View:            s3View,
 			},
 			fail: true,
+			errRegex: "^foo$",
 		},
 		{
 			name: "redshift access token",
@@ -146,18 +150,25 @@ func TestAwsAdapter(t *testing.T) {
 				View:            redshiftView,
 			},
 			fail: false,
+			errRegex: "^foo$",
 		},
 	}
 	for _, test := range tests {
-		result, err := aws.MintToken(context.Background(), test.input)
-		if test.fail != (err != nil) {
-			t.Fatalf("test %q error mismatch: want error %v, got error %v", test.name, test.fail, err)
-		}
-		if err != nil {
-			continue
-		}
-		if len(result.Credentials) == 0 || len(result.Credentials["account"]) == 0 {
-			t.Errorf("test %q credentials mismatch: want non-empty, got empty", test.name)
-		}
+		t.Run(test.name, func(t *testing.T) {
+			result, err := aws.MintToken(context.Background(), test.input)
+			if test.fail != (err != nil) {
+				t.Fatalf("test %q error mismatch: want error %v, got error %v", test.name, test.fail, err)
+			}
+			if (test.fail) {
+				if (err != nil && stringserr.Error()) {
+				}
+			}
+			if err != nil {
+				return
+			}
+			if len(result.Credentials) == 0 || len(result.Credentials["account"]) == 0 {
+				t.Errorf("test %q credentials mismatch: want non-empty, got empty", test.name)
+			}
+		})
 	}
 }
