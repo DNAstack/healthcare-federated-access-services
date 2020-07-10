@@ -100,7 +100,6 @@ func TestAwsAdapter(t *testing.T) {
 				View:            s3View,
 			},
 			fail:     false,
-			errRegex: "^foo$",
 		},
 		{
 			name: "s3 access token for user",
@@ -117,7 +116,6 @@ func TestAwsAdapter(t *testing.T) {
 				View:            s3View,
 			},
 			fail: false,
-			errRegex: "^foo$",
 		},
 		{
 			name: "s3 too long ttl",
@@ -134,7 +132,7 @@ func TestAwsAdapter(t *testing.T) {
 				View:            s3View,
 			},
 			fail: true,
-			errRegex: "^foo$",
+			errRegex: "^AWS minting token:.*ttl.*greater than.*$",
 		},
 		{
 			name: "redshift access token",
@@ -151,20 +149,19 @@ func TestAwsAdapter(t *testing.T) {
 				View:            redshiftView,
 			},
 			fail: false,
-			errRegex: "^foo$",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 
-			pattern,err := regexp.Compile(test.errRegex);
+			pattern, err := regexp.Compile(test.errRegex)
 			if err != nil {
-				t.Fatalf("test %q errRegex %q invalid, got error %v", test.name,test.errRegex,err)
+				t.Fatalf("test %q errRegex %q invalid, got error %v", test.name, test.errRegex, err)
 			}
 
 			result, err := aws.MintToken(context.Background(), test.input)
 			if test.fail && err != nil && !pattern.MatchString(err.Error()) {
-				t.Fatalf("test %q error mismatch: want error %v, got error %v", test.name, test.fail, err)
+				t.Fatalf("test %q error mismatch:\n\twant error matching pattern: %s\n\tgot error: %v", test.name, test.errRegex, err)
 			}
 
 			if err != nil {
