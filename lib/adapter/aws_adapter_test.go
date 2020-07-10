@@ -1,9 +1,10 @@
 package adapter_test
 
 import (
+	"regexp"
 	"testing"
 	"time"
-
+	"strings"
 	"golang.org/x/net/context"
 
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/adapter"
@@ -155,11 +156,18 @@ func TestAwsAdapter(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+
+			pattern,err := regexp.Compile(test.errRegex);
+			if err != nil {
+				t.Fatalf("test %q errRegex %q invalid, got error %v", test.name,test.errRegex,err)
+			}
+
 			result, err := aws.MintToken(context.Background(), test.input)
-			if test.fail != (err != nil) {
+			if test.fail && err != nil && !pattern.MatchString(err.Error()) {
 				t.Fatalf("test %q error mismatch: want error %v, got error %v", test.name, test.fail, err)
 			}
-			if (test.fail) {
+
+			if test.fail {
 				if (err != nil && stringserr.Error()) {
 				}
 			}

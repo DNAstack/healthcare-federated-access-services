@@ -122,7 +122,7 @@ type fullLoginProfile struct {
 	password     *string
 }
 
-// Mock AWS Client
+// MockAWSClient
 type MockAwsClient struct {
 	Account          string
 	UserID           string
