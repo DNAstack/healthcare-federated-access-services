@@ -100,7 +100,7 @@ func TestConfigHandlers(t *testing.T) {
 		{
 			Method: "GET",
 			Path:   "/dam/v1alpha/master/services",
-			Output: `*"gcs":{"platform":"gcp","serviceVariables":{*},"itemVariables":{"bucket":*,"paths":*,"project":*,"type":*},"properties":{"canBeAggregated":true}*`,
+			Output: `*"gcs":{"platform":"gcp","serviceVariables":{*},"itemVariables":{"bucket":*,"project":*,"type":*},"properties":{"canBeAggregated":true}*`,
 			Status: http.StatusOK,
 		},
 		{
