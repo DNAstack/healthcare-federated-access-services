@@ -69,7 +69,9 @@ func (c *clientService) HandlerSetup(tx storage.Tx, r *http.Request) (*ga4gh.Ide
 
 func (c *clientService) SaveClient(name, secret string, cli *cpb.Client) {
 	c.cfg.Clients[name] = cli
-	c.sec.ClientSecrets[cli.ClientId] = secret
+	if secret != "" {
+		c.sec.ClientSecrets[cli.ClientId] = secret
+	}
 	c.save = true
 }
 
@@ -96,7 +98,7 @@ func (c *clientService) Save(tx storage.Tx, desc, typeName string, r *http.Reque
 
 func (c *clientService) CheckIntegrity(r *http.Request, m *cpb.ConfigModification) *status.Status {
 	realm := getRealm(r)
-	if err := check.CheckReadOnly(realm, c.cfg.Options.ReadOnlyMasterRealm, c.cfg.Options.WhitelistedRealms); err != nil {
+	if err := check.ValidToWriteConfig(realm, c.cfg.Options.ReadOnlyMasterRealm); err != nil {
 		return httputils.NewStatus(codes.InvalidArgument, err.Error())
 	}
 	if err := configRevision(toDAMModification(m), c.cfg); err != nil {

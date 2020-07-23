@@ -412,16 +412,16 @@ func checkAccessRoles(roles map[string]*pb.ViewRole, templateName, serviceName s
 		if len(role.Policies) > 20 {
 			return httputils.StatusPath(rname, "policies"), fmt.Errorf("role exceeeds policy limit")
 		}
-		hasWhitelist := false
+		hasAllowlist := false
 		for i, p := range role.Policies {
 			if len(p.Name) == 0 {
 				return httputils.StatusPath(rname, "policies", strconv.Itoa(i), "name"), fmt.Errorf("access policy name is not defined")
 			}
-			if p.Name == whitelistPolicyName {
-				hasWhitelist = true
+			if p.Name == allowlistPolicyName {
+				hasAllowlist = true
 				emails := strings.Split(p.Args["users"], ";")
 				if len(emails) > 20 {
-					return httputils.StatusPath(rname, "policies", strconv.Itoa(i), "args", "users"), fmt.Errorf("number of emails on whitelist policy exceeeds limit")
+					return httputils.StatusPath(rname, "policies", strconv.Itoa(i), "args", "users"), fmt.Errorf("number of emails on allowlist policy exceeeds limit")
 				}
 				for j, email := range emails {
 					if _, err := mail.ParseAddress(email); err != nil {
@@ -440,8 +440,8 @@ func checkAccessRoles(roles map[string]*pb.ViewRole, templateName, serviceName s
 		if len(role.Policies) == 0 && !desc.Properties.IsAggregate {
 			return httputils.StatusPath(rname, "policies"), fmt.Errorf("must provide at least one target policy")
 		}
-		if hasWhitelist && len(role.Policies) > 1 {
-			return httputils.StatusPath(rname, "policies"), fmt.Errorf("whitelist policies cannot be used in combination with any other policies")
+		if hasAllowlist && len(role.Policies) > 1 {
+			return httputils.StatusPath(rname, "policies"), fmt.Errorf("allowlist policies cannot be used in combination with any other policies")
 		}
 	}
 	return "", nil
@@ -506,9 +506,6 @@ func checkOptionsIntegrity(opts *pb.ConfigOptions, vopts ValidateCfgOpts) *statu
 	}
 	// Get the descriptors.
 	opts = makeConfigOptions(opts)
-	if err := check.CheckStringListOption(opts.WhitelistedRealms, "whitelistedRealms", opts.ComputedDescriptors); err != nil {
-		return httputils.NewInfoStatus(codes.InvalidArgument, httputils.StatusPath(cfgOptions, "whitelistedRealms"), err.Error())
-	}
 	if err := check.CheckStringOption(opts.GcpManagedKeysMaxRequestedTtl, "gcpManagedKeysMaxRequestedTtl", opts.ComputedDescriptors); err != nil {
 		return httputils.NewInfoStatus(codes.InvalidArgument, httputils.StatusPath(cfgOptions, "gcpManagedKeysMaxRequestedTtl"), err.Error())
 	}
@@ -523,7 +520,7 @@ func checkOptionsIntegrity(opts *pb.ConfigOptions, vopts ValidateCfgOpts) *statu
 
 func configCheckIntegrity(cfg *pb.DamConfig, mod *pb.ConfigModification, r *http.Request, vopts ValidateCfgOpts) *status.Status {
 	bad := codes.InvalidArgument
-	if err := check.CheckReadOnly(getRealm(r), cfg.Options.ReadOnlyMasterRealm, cfg.Options.WhitelistedRealms); err != nil {
+	if err := check.ValidToWriteConfig(getRealm(r), cfg.Options.ReadOnlyMasterRealm); err != nil {
 		return httputils.NewStatus(bad, err.Error())
 	}
 	if len(cfg.Version) == 0 {

@@ -15,6 +15,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -129,7 +130,8 @@ func (f *FileStorage) ReadTx(datatype, realm, user, id string, rev int64, conten
 	}
 	defer file.Close()
 	if err := jsonpb.Unmarshal(file, content); err != nil && err != io.EOF {
-		return fmt.Errorf("file %q invalid JSON: %v", fname, err)
+		dat, _ := ioutil.ReadFile(fname)
+		return fmt.Errorf("file %q invalid JSON: %v\n%s", fname, err, string(dat))
 	}
 	if rev == LatestRev {
 		f.cache.PutEntity(fname, content)
@@ -138,8 +140,8 @@ func (f *FileStorage) ReadTx(datatype, realm, user, id string, rev int64, conten
 }
 
 // MultiReadTx reads a set of objects matching the input parameters and filters
-func (f *FileStorage) MultiReadTx(datatype, realm, user string, filters [][]Filter, offset, pageSize int, content map[string]map[string]proto.Message, typ proto.Message, tx Tx) (int, error) {
-	return 0, fmt.Errorf("file storage does not support MultiReadTx")
+func (f *FileStorage) MultiReadTx(datatype, realm, user, id string, filters [][]Filter, offset, pageSize int, typ proto.Message, tx Tx) (*Results, error) {
+	return nil, fmt.Errorf("file storage does not support MultiReadTx")
 }
 
 func (f *FileStorage) ReadHistory(datatype, realm, user, id string, content *[]proto.Message) error {
@@ -206,8 +208,8 @@ func (f *FileStorage) MultiDeleteTx(datatype, realm, user string, tx Tx) error {
 }
 
 // Wipe deletes all records within a realm.
-func (f *FileStorage) Wipe(realm string) error {
-	return fmt.Errorf("file storage does not support Wipe")
+func (f *FileStorage) Wipe(ctx context.Context, realm string, batchNum, maxEntries int) (int, error) {
+	return 0, fmt.Errorf("file storage does not support Wipe")
 }
 
 func (f *FileStorage) Tx(update bool) (Tx, error) {

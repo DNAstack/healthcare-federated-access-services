@@ -52,6 +52,7 @@ import (
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/httputils" /* copybara-comment: httputils */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/hydraproxy" /* copybara-comment: hydraproxy */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/kms" /* copybara-comment: kms */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/lro" /* copybara-comment: lro */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/oathclients" /* copybara-comment: oathclients */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/permissions" /* copybara-comment: permissions */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/persona" /* copybara-comment: persona */
@@ -129,6 +130,7 @@ type Service struct {
 	skipInformationReleasePage bool
 	infomationReleasePageTmpl  *template.Template
 	consentDashboardURL        string
+	lro                        lro.LRO
 }
 
 type ServiceHandler struct {
@@ -182,6 +184,8 @@ type Options struct {
 	// ConsentDashboardURL is url to frontend consent dashboard, will replace
 	// ${USER_ID} with userID.
 	ConsentDashboardURL string
+	// LRO: the long running operation background process
+	LRO lro.LRO
 }
 
 // NewService create DAM service
@@ -233,6 +237,7 @@ func New(r *mux.Router, params *Options) *Service {
 		auditlogs:                  auditlogsapi.NewAuditLogs(params.SDLC, params.AuditLogProject, params.ServiceName),
 		signer:                     params.Signer,
 		encryption:                 params.Encryption,
+		lro:                        params.LRO,
 	}
 
 	if s.httpClient == nil {
@@ -306,6 +311,8 @@ func New(r *mux.Router, params *Options) *Service {
 	a := authChecker{s: s}
 	checker := auth.NewChecker(s.logger, s.getIssuerString(), permissions.New(s.store), a.fetchClientSecrets, a.transformIdentity)
 	s.checker = checker
+
+	go s.lro.Run(ctx)
 
 	sh.s = s
 	sh.Handler = r
@@ -399,6 +406,11 @@ func (s *Service) getIssuerString() string {
 	}
 
 	return ""
+}
+
+func (s *Service) lroURI(id string) string {
+	uri := strings.Replace(strings.TrimRight(s.domainURL, "/")+lroPath, "{name}", id, -1)
+	return strings.Replace(uri, "{realm}", storage.DefaultRealm, -1)
 }
 
 func (s *Service) upstreamTokenToPassportIdentity(ctx context.Context, cfg *pb.DamConfig, tx storage.Tx, tok, clientID string) (*ga4gh.Identity, error) {
@@ -628,13 +640,13 @@ func checkAuthorization(ctx context.Context, id *ga4gh.Identity, ttl time.Durati
 
 		ctxWithTTL := context.WithValue(ctx, validator.RequestTTLInNanoFloat64, float64(ttl.Nanoseconds())/1e9)
 		for _, p := range vRole.Policies {
-			if p.Name == whitelistPolicyName {
-				ok, err := checkWhitelist(p.Args, id, cfg, vopts)
+			if p.Name == allowlistPolicyName {
+				ok, err := checkAllowlist(p.Args, id, cfg, vopts)
 				if err != nil {
-					return errutil.WithErrorReason(errWhitelistUnavailable, status.Errorf(codes.PermissionDenied, "unauthorized for resource %q view %q role %q (whitelist unavailable): %v", resourceName, viewName, roleName, err))
+					return errutil.WithErrorReason(errAllowlistUnavailable, status.Errorf(codes.PermissionDenied, "unauthorized for resource %q view %q role %q (allowlist unavailable): %v", resourceName, viewName, roleName, err))
 				}
 				if !ok {
-					return errutil.WithErrorReason(errRejectedPolicy, status.Errorf(codes.PermissionDenied, "unauthorized for resource %q view %q role %q (user not on whitelist)", resourceName, viewName, roleName))
+					return errutil.WithErrorReason(errRejectedPolicy, status.Errorf(codes.PermissionDenied, "unauthorized for resource %q view %q role %q (user not on allowlist)", resourceName, viewName, roleName))
 				}
 				active = true
 				continue
@@ -662,7 +674,7 @@ func checkAuthorization(ctx context.Context, id *ga4gh.Identity, ttl time.Durati
 	return nil
 }
 
-func checkWhitelist(args map[string]string, id *ga4gh.Identity, cfg *pb.DamConfig, vopts ValidateCfgOpts) (bool, error) {
+func checkAllowlist(args map[string]string, id *ga4gh.Identity, cfg *pb.DamConfig, vopts ValidateCfgOpts) (bool, error) {
 	if id.GA4GH == nil {
 		return false, nil
 	}
@@ -675,22 +687,22 @@ func checkWhitelist(args map[string]string, id *ga4gh.Identity, cfg *pb.DamConfi
 		groups = nil
 	}
 	for _, email := range extractEmails(id) {
-		// Option 1: the whitelist item is an email address.
+		// Option 1: the allowlist item is an email address.
 		for _, wl := range users {
 			addr, err := mail.ParseAddress(wl)
 			if err != nil {
 				// Don't expose the email address to the end user, just hint at the problem being the email format.
-				return false, errutil.WithErrorReason(errWhitelistUnavailable, status.Errorf(codes.PermissionDenied, "whitelist contains invalid email addresses"))
+				return false, errutil.WithErrorReason(errAllowlistUnavailable, status.Errorf(codes.PermissionDenied, "allowlist contains invalid email addresses"))
 			}
 			if email == addr.Address {
 				return true, nil
 			}
 		}
-		// Option 2: the whitelist item is a group.
+		// Option 2: the allowlist item is a group.
 		for _, wl := range groups {
 			member, err := vopts.Scim.LoadGroupMember(wl, email, vopts.Realm, vopts.Tx)
 			if err != nil {
-				return false, errutil.WithErrorReason(errWhitelistUnavailable, status.Errorf(codes.PermissionDenied, "loading group %q member %q failed: %v", wl, email, err))
+				return false, errutil.WithErrorReason(errAllowlistUnavailable, status.Errorf(codes.PermissionDenied, "loading group %q member %q failed: %v", wl, email, err))
 			}
 			if member != nil {
 				return true, nil
@@ -1096,13 +1108,6 @@ func makeConfigOptions(opts *pb.ConfigOptions) *pb.ConfigOptions {
 			Type:         "bool",
 			DefaultValue: "false",
 		},
-		"whitelistedRealms": {
-			Label:       "Whitelisted Realms",
-			Description: "By default any realm name can be created, but when this option is populated the DAM will only allow realms on this list to be created (the master realm is allowed implicitly)",
-			Type:        "string",
-			IsList:      true,
-			Regexp:      "^[\\w\\-\\.]+$",
-		},
 		"gcpManagedKeysMaxRequestedTtl": {
 			Label:        "GCP Managed Keys Maximum Requested TTL",
 			Description:  "The maximum TTL of a requested access token on GCP and this setting is used in conjunction with managedKeysPerAccount to set up managed access key rotation policies within DAM (disabled by default)",
@@ -1153,8 +1158,8 @@ func receiveConfigOptions(opts *pb.ConfigOptions, cfg *pb.DamConfig) *pb.ConfigO
 }
 
 var (
-	whitelistPolicyName = "whitelist"
-	whitelistPolicy     = &pb.Policy{
+	allowlistPolicyName = "allowlist"
+	allowlistPolicy     = &pb.Policy{
 		AnyOf: []*cpb.ConditionSet{{AllOf: []*cpb.Condition{}}},
 		VariableDefinitions: map[string]*pb.VariableFormat{
 			"users": &pb.VariableFormat{
@@ -1177,8 +1182,8 @@ var (
 			},
 		},
 		Ui: map[string]string{
-			"label":       "Whitelist",
-			"description": "Allow users and groups to be whitelisted for access directly without using visas",
+			"label":       "Allowlist",
+			"description": "Allow users and groups to be allowlisted for access directly without using visas",
 			"source":      "built-in",
 			"edit":        "immutable",
 		},
@@ -1186,7 +1191,7 @@ var (
 
 	// BuiltinPolicies contains the set of policies that are managed by DAM directly (not the administrator).
 	BuiltinPolicies = map[string]*pb.Policy{
-		whitelistPolicyName: whitelistPolicy,
+		allowlistPolicyName: allowlistPolicy,
 	}
 )
 
@@ -1326,20 +1331,18 @@ func (s *Service) registerAllProjects(tx storage.Tx) error {
 	offset := 0
 	pageSize := 50
 	for {
-		content := make(map[string]map[string]proto.Message)
-		count, err := s.store.MultiReadTx(storage.ConfigDatatype, storage.AllRealms, storage.DefaultUser, nil, offset, pageSize, content, &pb.DamConfig{}, tx)
+		results, err := s.store.MultiReadTx(storage.ConfigDatatype, storage.AllRealms, storage.DefaultUser, storage.MatchAllIDs, nil, offset, pageSize, &pb.DamConfig{}, tx)
 		if err != nil {
 			return err
 		}
-		if count == 0 || len(content) == 0 {
+		count := len(results.Entries)
+		if count == 0 {
 			break
 		}
-		offset += count
-		for _, userVal := range content {
-			for _, v := range userVal {
-				if cfg, ok := v.(*pb.DamConfig); ok && len(cfg.Options.GcpServiceAccountProject) > 0 {
-					projects[cfg.Options.GcpServiceAccountProject] = true
-				}
+		offset += len(results.Entries)
+		for _, entry := range results.Entries {
+			if cfg, ok := entry.Item.(*pb.DamConfig); ok && len(cfg.Options.GcpServiceAccountProject) > 0 {
+				projects[cfg.Options.GcpServiceAccountProject] = true
 			}
 		}
 		if count < pageSize {
@@ -1523,10 +1526,15 @@ func registerHandlers(r *mux.Router, s *Service) {
 
 	// scim service endpoints
 	r.HandleFunc(scimGroupPath, auth.MustWithAuth(handlerfactory.MakeHandler(s.GetStore(), scim.GroupFactory(s.GetStore(), scimGroupPath)), s.checker, auth.RequireAdminTokenClientCredential))
+	r.HandleFunc(oldScimGroupPath, auth.MustWithAuth(handlerfactory.MakeHandler(s.GetStore(), scim.GroupFactory(s.GetStore(), scimGroupPath)), s.checker, auth.RequireAdminTokenClientCredential))
 	r.HandleFunc(scimGroupsPath, auth.MustWithAuth(handlerfactory.MakeHandler(s.GetStore(), scim.GroupsFactory(s.GetStore(), scimGroupsPath)), s.checker, auth.RequireAdminTokenClientCredential))
+	r.HandleFunc(oldScimGroupsPath, auth.MustWithAuth(handlerfactory.MakeHandler(s.GetStore(), scim.GroupsFactory(s.GetStore(), scimGroupsPath)), s.checker, auth.RequireAdminTokenClientCredential))
 	r.HandleFunc(scimMePath, auth.MustWithAuth(handlerfactory.MakeHandler(s.GetStore(), scim.MeFactory(s.GetStore(), s.domainURL, scimMePath)), s.checker, auth.RequireAccountAdminUserTokenCredential))
+	r.HandleFunc(oldScimMePath, auth.MustWithAuth(handlerfactory.MakeHandler(s.GetStore(), scim.MeFactory(s.GetStore(), s.domainURL, scimMePath)), s.checker, auth.RequireAccountAdminUserTokenCredential))
 	r.HandleFunc(scimUserPath, auth.MustWithAuth(handlerfactory.MakeHandler(s.GetStore(), scim.UserFactory(s.GetStore(), s.domainURL, scimUserPath)), s.checker, auth.RequireAccountAdminUserTokenCredential))
+	r.HandleFunc(oldScimUserPath, auth.MustWithAuth(handlerfactory.MakeHandler(s.GetStore(), scim.UserFactory(s.GetStore(), s.domainURL, scimUserPath)), s.checker, auth.RequireAccountAdminUserTokenCredential))
 	r.HandleFunc(scimUsersPath, auth.MustWithAuth(handlerfactory.MakeHandler(s.GetStore(), scim.UsersFactory(s.GetStore(), s.domainURL, scimUsersPath)), s.checker, auth.RequireAdminTokenClientCredential))
+	r.HandleFunc(oldScimUsersPath, auth.MustWithAuth(handlerfactory.MakeHandler(s.GetStore(), scim.UsersFactory(s.GetStore(), s.domainURL, scimUsersPath)), s.checker, auth.RequireAdminTokenClientCredential))
 
 	// hydra related oidc endpoints
 	r.HandleFunc(hydraLoginPath, auth.MustWithAuth(s.HydraLogin, s.checker, auth.RequireNone)).Methods(http.MethodGet)
@@ -1562,6 +1570,9 @@ func registerHandlers(r *mux.Router, s *Service) {
 
 	// audit logs endpoints
 	r.HandleFunc(auditlogsPath, auth.MustWithAuth(handlerfactory.MakeHandler(s.store, auditlogsapi.ListAuditlogsPathFactory(auditlogsPath, s.auditlogs)), s.checker, auth.RequireUserTokenClientCredential)).Methods(http.MethodGet)
+
+	// LRO endpoints
+	r.HandleFunc(lroPath, auth.MustWithAuth(handlerfactory.MakeHandler(s.GetStore(), s.lroFactory()), s.checker, auth.RequireClientIDAndSecret)).Methods(http.MethodGet)
 
 	// proxy hydra oauth token endpoint
 	if s.hydraPublicURLProxy != nil {

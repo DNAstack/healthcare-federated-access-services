@@ -131,15 +131,15 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Get SCIM groups",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Groups",
+			Path:    "/scim/v2/test/Groups",
 			Persona: "admin",
-			Output:  `{"Resources":[{"id":"admins","displayName":"System Administrators"},{"id":"auditors","displayName":"Auditors"},{"id":"lab","displayName":"Lab Members"},{"id":"whitelisted","displayName":"Whitelisted Users"}],"startIndex":1,"itemsPerPage":4,"totalResults":4,"schemas":["urn:ietf:params:scim:api:messages:2.0:ListResponse"]}`,
+			Output:  `{"Resources":[{"id":"admins","displayName":"System Administrators"},{"id":"allowlisted","displayName":"Allowlisted Users"},{"id":"auditors","displayName":"Auditors"},{"id":"lab","displayName":"Lab Members"}],"startIndex":1,"itemsPerPage":4,"totalResults":4,"schemas":["urn:ietf:params:scim:api:messages:2.0:ListResponse"]}`,
 			Status:  http.StatusOK,
 		},
 		{
 			Name:    "Get SCIM groups (paginate)",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Groups",
+			Path:    "/scim/v2/test/Groups",
 			Params:  "startIndex=2&count=1",
 			Persona: "admin",
 			Output:  `^.*"startIndex":2,"itemsPerPage":1,"totalResults":4,.*`,
@@ -148,7 +148,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Get SCIM groups - filter displayName",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Groups",
+			Path:    "/scim/v2/test/Groups",
 			Persona: "admin",
 			Params:  `filter=displayName%20co%20"aud"`,
 			Output:  `{"Resources":[{"id":"auditors","displayName":"Auditors"}],"startIndex":1,"itemsPerPage":1,"totalResults":1,"schemas":["urn:ietf:params:scim:api:messages:2.0:ListResponse"]}`,
@@ -157,16 +157,16 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Get SCIM groups - filter id",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Groups",
+			Path:    "/scim/v2/test/Groups",
 			Persona: "admin",
-			Params:  `filter=id%20co%20"it"`,
-			Output:  `{"Resources":[{"id":"auditors","displayName":"Auditors"},{"id":"whitelisted","displayName":"Whitelisted Users"}],"startIndex":1,"itemsPerPage":2,"totalResults":2,"schemas":["urn:ietf:params:scim:api:messages:2.0:ListResponse"]}`,
+			Params:  `filter=id%20co%20"l"`,
+			Output:  `{"Resources":[{"id":"allowlisted","displayName":"Allowlisted Users"},{"id":"lab","displayName":"Lab Members"}],"startIndex":1,"itemsPerPage":2,"totalResults":2,"schemas":["urn:ietf:params:scim:api:messages:2.0:ListResponse"]}`,
 			Status:  http.StatusOK,
 		},
 		{
 			Name:    "Get SCIM groups (non-admin)",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Groups",
+			Path:    "/scim/v2/test/Groups",
 			Persona: "non-admin",
 			Output:  `^.*requires admin permission.*`,
 			Status:  http.StatusUnauthorized,
@@ -174,7 +174,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Post SCIM groups",
 			Method:  "POST",
-			Path:    "/identity/scim/v2/test/Groups",
+			Path:    "/scim/v2/test/Groups",
 			Persona: "admin",
 			Output:  `*{"code":6,*}*`,
 			Status:  http.StatusConflict,
@@ -182,7 +182,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Put SCIM groups",
 			Method:  "PUT",
-			Path:    "/identity/scim/v2/test/Groups",
+			Path:    "/scim/v2/test/Groups",
 			Persona: "admin",
 			Output:  `*not allowed*`,
 			Status:  http.StatusBadRequest,
@@ -190,7 +190,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Patch SCIM groups",
 			Method:  "PATCH",
-			Path:    "/identity/scim/v2/test/Groups",
+			Path:    "/scim/v2/test/Groups",
 			Persona: "admin",
 			Output:  `*not allowed*`,
 			Status:  http.StatusBadRequest,
@@ -198,7 +198,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Delete SCIM groups",
 			Method:  "DELETE",
-			Path:    "/identity/scim/v2/test/Groups",
+			Path:    "/scim/v2/test/Groups",
 			Persona: "admin",
 			Output:  `*not allowed*`,
 			Status:  http.StatusBadRequest,
@@ -206,7 +206,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Get SCIM group (not exists)",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Groups/group_1",
+			Path:    "/scim/v2/test/Groups/group_1",
 			Persona: "admin",
 			Output:  `*{"code":5,"message":"*"}*`,
 			Status:  http.StatusNotFound,
@@ -214,7 +214,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Post SCIM group",
 			Method:  "POST",
-			Path:    "/identity/scim/v2/test/Groups/group_1",
+			Path:    "/scim/v2/test/Groups/group_1",
 			Persona: "admin",
 			Input: `{
 			  "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
@@ -225,9 +225,81 @@ func TestHandlers(t *testing.T) {
 			Status: http.StatusOK,
 		},
 		{
+			Name:    "Post SCIM group - with members",
+			Method:  "POST",
+			Path:    "/scim/v2/test/Groups/group_2",
+			Persona: "admin",
+			Input: `{
+			  "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+				"id": "group_2",
+				"displayName": "Group 2",
+				"members": [
+				  {
+						"type": "User",
+						"display": "Dr. Joe",
+						"value": "dr_joe@example.org"
+					}, {
+						"type": "User",
+						"value": "someone@example.org"
+					}, {
+						"value": "Dr. Joe <dr_joe@home.example.org>"
+					}
+				]
+			}`,
+			Output: ``,
+			Status: http.StatusOK,
+		},
+		{
+			Name:    "Post SCIM group - invalid email address",
+			Method:  "POST",
+			Path:    "/scim/v2/test/Groups/group_3",
+			Persona: "admin",
+			Input: `{
+			  "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+				"id": "group_3",
+				"displayName": "Group 3",
+				"members": [{"value": "bad"}]
+			}`,
+			Output: `*"code":3*`,
+			Status: http.StatusBadRequest,
+		},
+		{
+			Name:    "Post SCIM group - invalid display name in display field",
+			Method:  "POST",
+			Path:    "/scim/v2/test/Groups/group_3",
+			Persona: "admin",
+			Input: `{
+			  "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+				"id": "group_3",
+				"displayName": "Group 3",
+				"members": [
+				  {
+						"display": "dr_joe@example.org",
+						"value": "phishing@scam.com"
+					}
+				]
+			}`,
+			Output: `*"code":3*`,
+			Status: http.StatusBadRequest,
+		},
+		{
+			Name:    "Post SCIM group - invalid display name in email address",
+			Method:  "POST",
+			Path:    "/scim/v2/test/Groups/group_3",
+			Persona: "admin",
+			Input: `{
+			  "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+				"id": "group_3",
+				"displayName": "Group 3",
+				"members": [{"value": "dr_joe@example.org <phishing@scam.com>"}]
+			}`,
+			Output: `*"code":3*`,
+			Status: http.StatusBadRequest,
+		},
+		{
 			Name:    "Put SCIM group",
 			Method:  "PUT",
-			Path:    "/identity/scim/v2/test/Groups/group_1",
+			Path:    "/scim/v2/test/Groups/group_1",
 			Persona: "admin",
 			Input: `{
 			  "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
@@ -252,25 +324,24 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Get SCIM group (exists)",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Groups/group_1",
+			Path:    "/scim/v2/test/Groups/group_1",
 			Persona: "admin",
-			Output:  `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],"id":"group_1","displayName":"Group 1","members":[{"type":"User","display":"mary@example.org","value":"mary@example.org","$ref":"mary@example.org","issuer":"https://example.org/oidc","subject":"1234"},{"type":"User","display":"Mary Poppins HQ","value":"poppins@example.org","$ref":"poppins@example.org"}]}`,
+			Output:  `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],"id":"group_1","displayName":"Group 1","members":[{"type":"User","value":"mary@example.org","$ref":"mary@example.org","issuer":"https://example.org/oidc","subject":"1234"},{"type":"User","display":"Mary Poppins HQ","value":"poppins@example.org","$ref":"poppins@example.org"}]}`,
 			Status:  http.StatusOK,
 		},
-		// TODO: fix the code and uncomment this test
-		// {
-		// 	Name:    "Patch SCIM group",
-		// 	Method:  "PATCH",
-		// 	Path:    "/identity/scim/v2/test/Groups/group_1",
-		// 	Persona: "admin",
-		// 	Input:   `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"replace","path":"displayName","value":"Group 1 Edit"},{"op":"add","path":"members","object":{"value":"Mary Poppins <marypoppins@example.org>"}},{"op":"remove","path":"members[$ref eq \"poppins@example.org\"]"}]}`,
-		// 	Output:  `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],"id":"group_1","displayName":"Group 1 Edit","members":[{"type":"User","display":"mary@example.org","value":"mary@example.org","$ref":"mary@example.org","issuer":"https://example.org/oidc","subject":"1234"},{"type":"User","display":"Mary Poppins","value":"marypoppins@example.org","$ref":"marypoppins@example.org"}]}`,
-		// 	Status:  http.StatusOK,
-		// },
+		{
+			Name:    "Patch SCIM group",
+			Method:  "PATCH",
+			Path:    "/scim/v2/test/Groups/group_1",
+			Persona: "admin",
+			Input:   `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"replace","path":"displayName","value":"Group 1 Edit"},{"op":"add","path":"members","object":{"value":"Mary Poppins <marypoppins@example.org>"}},{"op":"remove","path":"members[$ref eq \"poppins@example.org\"]"}]}`,
+			Output:  `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],"id":"group_1","displayName":"Group 1 Edit","members":[{"type":"User","value":"mary@example.org","$ref":"mary@example.org","issuer":"https://example.org/oidc","subject":"1234"},{"type":"User","display":"Mary Poppins","value":"marypoppins@example.org","$ref":"marypoppins@example.org"}]}`,
+			Status:  http.StatusOK,
+		},
 		{
 			Name:    "Patch SCIM group (bad email address)",
 			Method:  "PATCH",
-			Path:    "/identity/scim/v2/test/Groups/group_1",
+			Path:    "/scim/v2/test/Groups/group_1",
 			Persona: "admin",
 			Input:   `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"add","path":"members","object":{"value":"mary@poppins@example.org"}}]}`,
 			Output:  `*{"code":3,"message":"*"}*`,
@@ -279,7 +350,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Patch SCIM group (missing remove member)",
 			Method:  "PATCH",
-			Path:    "/identity/scim/v2/test/Groups/group_1",
+			Path:    "/scim/v2/test/Groups/group_1",
 			Persona: "admin",
 			Input:   `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"remove","path":"members[$ref eq \"foo@example.org\"]"}]}`,
 			Output:  `*{"code":3,"message":"*not a member*"}*`,
@@ -288,32 +359,31 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Remove SCIM group",
 			Method:  "DELETE",
-			Path:    "/identity/scim/v2/test/Groups/group_1",
+			Path:    "/scim/v2/test/Groups/group_1",
 			Persona: "admin",
 			Output:  ``,
 			Status:  http.StatusOK,
 		},
-		// TODO: fix the code and uncomment this test
-		// {
-		// 	Name:    "Get SCIM group (after delete)",
-		// 	Method:  "GET",
-		// 	Path:    "/identity/scim/v2/test/Groups/group_1",
-		// 	Persona: "admin",
-		// 	Output:  `*{"code":5,"message":"*"}*`,
-		// 	Status:  http.StatusNotFound,
-		// },
+		{
+			Name:    "Get SCIM group (after delete)",
+			Method:  "GET",
+			Path:    "/scim/v2/test/Groups/group_1",
+			Persona: "admin",
+			Output:  `*{"code":5,"message":"*"}*`,
+			Status:  http.StatusNotFound,
+		},
 		{
 			Name:    "Get SCIM users",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Users",
+			Path:    "/scim/v2/test/Users",
 			Persona: "admin",
-			Output:  `{"Resources":[{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":"admin","externalId":"admin","meta":{"resourceType":"User","created":"2019-06-22T13:29:50Z","lastModified":"2019-06-22T18:07:30Z","location":"https://example.com/identity/scim/v2/test/Users/admin","version":"1"},"userName":"admin","name":{"formatted":"Administrator"},"displayName":"Administrator","active":true,"emails":[{"value":"admin@faculty.example.edu","$ref":"email//administrator"}]},{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":"dr_joe_elixir","externalId":"dr_joe_elixir","meta":{"resourceType":"User","created":"2019-06-22T13:29:40Z","lastModified":"2019-06-22T18:07:20Z","location":"https://example.com/identity/scim/v2/test/Users/dr_joe_elixir","version":"1"},"userName":"dr_joe_elixir","name":{"formatted":"Dr. Joe (ELIXIR)"},"displayName":"Dr. Joe (ELIXIR)","active":true},{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":"non-admin","externalId":"non-admin","meta":{"resourceType":"User","created":"2019-06-22T13:29:59Z","lastModified":"2019-06-22T18:08:19Z","location":"https://example.com/identity/scim/v2/test/Users/non-admin","version":"1"},"userName":"non-admin","name":{"formatted":"Non Administrator"},"displayName":"Non Administrator","active":true,"emails":[{"value":"non-admin@example.org","$ref":"email/persona/non-admin"},{"value":"non-admin-1@example.org","$ref":"email/persona/non-admin-1"}]},{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":"someone-account","externalId":"someone-account","meta":{"resourceType":"User","created":"2019-06-22T13:29:36Z","lastModified":"2019-06-22T18:07:11Z","location":"https://example.com/identity/scim/v2/test/Users/someone-account","version":"1"},"userName":"someone-account","name":{"formatted":"Someone at Somewhere","familyName":"Somewhere","givenName":"Someone","middleName":"at"},"displayName":"Someone Account","profileUrl":"https://example.org/users/someone","preferredLanguage":"en-CA","locale":"en-US","timezone":"America/New_York","active":true}],"startIndex":1,"itemsPerPage":4,"totalResults":4,"schemas":["urn:ietf:params:scim:api:messages:2.0:ListResponse"]}`,
+			Output:  `{"Resources":[{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":"admin","externalId":"admin","meta":{"resourceType":"User","created":"2019-06-22T13:29:50Z","lastModified":"2019-06-22T18:07:30Z","location":"https://example.com/scim/v2/test/Users/admin","version":"1"},"userName":"admin","name":{"formatted":"Administrator"},"displayName":"Administrator","active":true,"emails":[{"value":"admin@faculty.example.edu","$ref":"email//administrator"}]},{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":"dr_joe_elixir","externalId":"dr_joe_elixir","meta":{"resourceType":"User","created":"2019-06-22T13:29:40Z","lastModified":"2019-06-22T18:07:20Z","location":"https://example.com/scim/v2/test/Users/dr_joe_elixir","version":"1"},"userName":"dr_joe_elixir","name":{"formatted":"Dr. Joe (ELIXIR)"},"displayName":"Dr. Joe (ELIXIR)","active":true,"emails":[{"value":"dr_joe@elixir.org","$ref":"email//dr_joe_elixir"},{"value":"dr_joe@faculty.example.edu","$ref":"email//dr_joe_faculty"}]},{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":"non-admin","externalId":"non-admin","meta":{"resourceType":"User","created":"2019-06-22T13:29:59Z","lastModified":"2019-06-22T18:08:19Z","location":"https://example.com/scim/v2/test/Users/non-admin","version":"1"},"userName":"non-admin","name":{"formatted":"Non Administrator"},"displayName":"Non Administrator","active":true,"emails":[{"value":"non-admin@example.org","$ref":"email/persona/non-admin"},{"value":"non-admin-1@example.org","$ref":"email/persona/non-admin-1"}]},{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":"someone-account","externalId":"someone-account","meta":{"resourceType":"User","created":"2019-06-22T13:29:36Z","lastModified":"2019-06-22T18:07:11Z","location":"https://example.com/scim/v2/test/Users/someone-account","version":"1"},"userName":"someone-account","name":{"formatted":"Someone at Somewhere","familyName":"Somewhere","givenName":"Someone","middleName":"at"},"displayName":"Someone Account","profileUrl":"https://example.org/users/someone","preferredLanguage":"en-CA","locale":"en-US","timezone":"America/New_York","active":true}],"startIndex":1,"itemsPerPage":4,"totalResults":4,"schemas":["urn:ietf:params:scim:api:messages:2.0:ListResponse"]}`,
 			Status:  http.StatusOK,
 		},
 		{
 			Name:    "Get SCIM users (paginate)",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Users",
+			Path:    "/scim/v2/test/Users",
 			Params:  "startIndex=3&count=1",
 			Persona: "admin",
 			Output:  `^.*"startIndex":3,"itemsPerPage":1,"totalResults":4,.*`,
@@ -322,7 +392,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Get SCIM users - filter active",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Users",
+			Path:    "/scim/v2/test/Users",
 			Persona: "admin",
 			Params:  `filter=active%20eq%20"false"`,
 			Output:  `^\{("Resources":\[\],)?"startIndex":1,"schemas":\["urn:ietf:params:scim:api:messages:2.0:ListResponse"\]}`,
@@ -331,7 +401,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Get SCIM users - filter displayName",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Users",
+			Path:    "/scim/v2/test/Users",
 			Persona: "admin",
 			Params:  `filter=displayName%20co%20"administrator"`,
 			Output:  `^.*"userName":"admin".*"userName":"non-admin".*"totalResults":2,.*`,
@@ -340,7 +410,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Get SCIM users - filter emails",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Users",
+			Path:    "/scim/v2/test/Users",
 			Persona: "admin",
 			Params:  `filter=emails%20co%20"non-admin@example.org"`,
 			Output:  `^.*"userName":"non-admin".*"totalResults":1,.*`,
@@ -349,7 +419,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Get SCIM users - filter externalId",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Users",
+			Path:    "/scim/v2/test/Users",
 			Persona: "admin",
 			Params:  `filter=externalId%20co%20"admin"`,
 			Output:  `^.*"userName":"admin".*"userName":"non-admin".*"totalResults":2,.*`,
@@ -358,7 +428,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Get SCIM users - filter id",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Users",
+			Path:    "/scim/v2/test/Users",
 			Persona: "admin",
 			Params:  `filter=id%20co%20"admin"`,
 			Output:  `^.*"userName":"admin".*"userName":"non-admin".*"totalResults":2,.*`,
@@ -367,7 +437,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Get SCIM users - filter preferred language",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Users",
+			Path:    "/scim/v2/test/Users",
 			Persona: "admin",
 			Params:  `filter=preferredLanguage%20eq%20"en-CA"`,
 			Output:  `^.*"userName":"someone-account".*"totalResults":1,.*`,
@@ -376,7 +446,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Get SCIM users - filter locale",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Users",
+			Path:    "/scim/v2/test/Users",
 			Persona: "admin",
 			Params:  `filter=locale%20co%20"en-US"`,
 			Output:  `^.*"userName":"someone-account".*"totalResults":1,.*`,
@@ -385,7 +455,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Get SCIM users - filter preferredLanguage",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Users",
+			Path:    "/scim/v2/test/Users",
 			Persona: "admin",
 			Params:  `filter=preferredLanguage%20co%20"en"`,
 			Output:  `^.*"userName":"someone-account".*"totalResults":1,.*`,
@@ -394,7 +464,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Get SCIM users - filter name.formatted",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Users",
+			Path:    "/scim/v2/test/Users",
 			Persona: "admin",
 			Params:  `filter=name.formatted%20co%20"admin"`,
 			Output:  `^.*"userName":"admin".*"userName":"non-admin".*"totalResults":2,.*`,
@@ -403,7 +473,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Get SCIM users - filter name.givenName",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Users",
+			Path:    "/scim/v2/test/Users",
 			Persona: "admin",
 			Params:  `filter=name.givenName%20co%20"someone"`,
 			Output:  `^.*"userName":"someone-account".*"totalResults":1,.*`,
@@ -412,7 +482,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Get SCIM users - filter name.familyName",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Users",
+			Path:    "/scim/v2/test/Users",
 			Persona: "admin",
 			Params:  `filter=name.familyName%20sw%20"somewhere"`,
 			Output:  `^.*"userName":"someone-account".*"totalResults":1,.*`,
@@ -421,7 +491,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Get SCIM users - filter name.middleName",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Users",
+			Path:    "/scim/v2/test/Users",
 			Persona: "admin",
 			Params:  `filter=name.middleName%20ew%20"at"`,
 			Output:  `^.*"userName":"someone-account".*"totalResults":1,.*`,
@@ -430,7 +500,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Get SCIM users - filter userName",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Users",
+			Path:    "/scim/v2/test/Users",
 			Persona: "admin",
 			Params:  `filter=userName%20co%20"joe"`,
 			Output:  `^.*"userName":"dr_joe_elixir".*"totalResults":1,.*`,
@@ -439,7 +509,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Get SCIM users - filter timezone",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Users",
+			Path:    "/scim/v2/test/Users",
 			Persona: "admin",
 			Params:  `filter=timezone%20co%20"america"`,
 			Output:  `^.*"userName":"someone-account".*"totalResults":1,.*`,
@@ -448,7 +518,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Get SCIM users - filter OR clause",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Users",
+			Path:    "/scim/v2/test/Users",
 			Persona: "admin",
 			Params:  `filter=displayName%20co%20"administrator"%20or%20userName%20co%20"joe"`,
 			Output:  `^.*"userName":"admin".*"userName":"dr_joe_elixir".*"userName":"non-admin".*"totalResults":3,.*`,
@@ -457,7 +527,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Get SCIM users - filter CNF clause match",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Users",
+			Path:    "/scim/v2/test/Users",
 			Persona: "admin",
 			Params:  `filter=%28displayName%20co%20%22administrator%22%20or%20userName%20co%20%22joe%22%29%20and%20active%20eq%20%22true%22`,
 			Output:  `^.*"userName":"admin".*"userName":"dr_joe_elixir".*"userName":"non-admin".*"totalResults":3,.*`,
@@ -466,7 +536,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Get SCIM users - filter CNF clause no match",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Users",
+			Path:    "/scim/v2/test/Users",
 			Persona: "admin",
 			Params:  `filter=%28displayName%20co%20%22administrator%22%20or%20userName%20co%20%22joe%22%29%20and%20active%20ne%20%22true%22`,
 			Output:  `{"startIndex":1,"schemas":["urn:ietf:params:scim:api:messages:2.0:ListResponse"]}`,
@@ -475,7 +545,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Get SCIM users (non-admin)",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Users",
+			Path:    "/scim/v2/test/Users",
 			Persona: "non-admin",
 			Scope:   persona.AccountScope,
 			Output:  `^.*requires admin permission.*`,
@@ -484,16 +554,16 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Get SCIM me",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Me",
+			Path:    "/scim/v2/test/Me",
 			Persona: "non-admin",
 			Scope:   persona.AccountScope,
-			Output:  `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":"non-admin","externalId":"non-admin","meta":{"resourceType":"User","created":"2019-06-22T13:29:59Z","lastModified":"2019-06-22T18:08:19Z","location":"https://example.com/identity/scim/v2/test/Users/non-admin","version":"1"},"userName":"non-admin","name":{"formatted":"Non Administrator"},"displayName":"Non Administrator","active":true,"emails":[{"value":"non-admin@example.org","$ref":"email/persona/non-admin"},{"value":"non-admin-1@example.org","$ref":"email/persona/non-admin-1"}]}`,
+			Output:  `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":"non-admin","externalId":"non-admin","meta":{"resourceType":"User","created":"2019-06-22T13:29:59Z","lastModified":"2019-06-22T18:08:19Z","location":"https://example.com/scim/v2/test/Users/non-admin","version":"1"},"userName":"non-admin","name":{"formatted":"Non Administrator"},"displayName":"Non Administrator","active":true,"emails":[{"value":"non-admin@example.org","$ref":"email/persona/non-admin"},{"value":"non-admin-1@example.org","$ref":"email/persona/non-admin-1"}]}`,
 			Status:  http.StatusOK,
 		},
 		{
 			Name:    "Get SCIM me (default scope)",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Me",
+			Path:    "/scim/v2/test/Me",
 			Persona: "non-admin",
 			Output:  `^.*urn:ietf:params:scim:schemas:core:2.0:User.*`,
 			Status:  http.StatusOK,
@@ -501,7 +571,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Patch SCIM me (default scope)",
 			Method:  "PATCH",
-			Path:    "/identity/scim/v2/test/Me",
+			Path:    "/scim/v2/test/Me",
 			Persona: "non-admin",
 			Input:   `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"replace","path":"name.formatted","value":"Non-Administrator"},{"op":"replace","path":"active","value":"false"}]}`,
 			Output:  `^.*account_admin.*`,
@@ -510,7 +580,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Patch SCIM me (bad photo)",
 			Method:  "PATCH",
-			Path:    "/identity/scim/v2/test/Me",
+			Path:    "/scim/v2/test/Me",
 			Persona: "non-admin",
 			Scope:   persona.AccountScope,
 			Input:   `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"replace","path":"photos[type eq \"thumbnail\"].value","value":"I am a teapot"}]}`,
@@ -520,7 +590,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Patch SCIM me (update photo)",
 			Method:  "PATCH",
-			Path:    "/identity/scim/v2/test/Me",
+			Path:    "/scim/v2/test/Me",
 			Persona: "non-admin",
 			Scope:   persona.AccountScope,
 			Input:   `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"replace","path":"photos[type eq \"thumbnail\"].value","value":"https://my.example.org/photos/me.jpeg"}]}`,
@@ -530,7 +600,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Patch SCIM me (set primary email)",
 			Method:  "PATCH",
-			Path:    "/identity/scim/v2/test/Me",
+			Path:    "/scim/v2/test/Me",
 			Persona: "non-admin",
 			Scope:   persona.AccountScope,
 			Input:   `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"replace","path":"emails[$ref eq \"email/persona/non-admin\"].primary","value":"true"}]}`,
@@ -540,7 +610,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Patch SCIM me (remove primary email)",
 			Method:  "PATCH",
-			Path:    "/identity/scim/v2/test/Me",
+			Path:    "/scim/v2/test/Me",
 			Persona: "non-admin",
 			Scope:   persona.AccountScope,
 			Input:   `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"remove","path":"emails[primary eq \"true\"].primary"}]}`,
@@ -550,26 +620,26 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Patch SCIM me (multiple ops)",
 			Method:  "PATCH",
-			Path:    "/identity/scim/v2/test/Me",
+			Path:    "/scim/v2/test/Me",
 			Persona: "non-admin",
 			Scope:   persona.AccountScope,
 			Input:   `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"replace","path":"name.formatted","value":"Non-Administrator"},{"op":"replace","path":"active","value":"false"}]}`,
-			Output:  `^\{"schemas":\["urn:ietf:params:scim:schemas:core:2.0:User"\],"id":"non-admin","externalId":"non-admin","meta":\{"resourceType":"User","created":"2019-06-22T13:29:59Z","lastModified":"....-..-..T..:..:..Z","location":"https://example.com/identity/scim/v2/test/Users/non-admin","version":"4"\},"userName":"non-admin","name":\{"formatted":"Non-Administrator"\},"displayName":"Non Administrator","emails":\[\{"value":"non-admin@example.org","\$ref":"email/persona/non-admin"\},\{"value":"non-admin-1@example.org","\$ref":"email/persona/non-admin-1"\}\],"photos":\[\{"primary":true,"value":"https://my.example.org/photos/me.jpeg"\}\]\}`,
+			Output:  `^\{"schemas":\["urn:ietf:params:scim:schemas:core:2.0:User"\],"id":"non-admin","externalId":"non-admin","meta":\{"resourceType":"User","created":"2019-06-22T13:29:59Z","lastModified":"....-..-..T..:..:..Z","location":"https://example.com/scim/v2/test/Users/non-admin","version":"4"\},"userName":"non-admin","name":\{"formatted":"Non-Administrator"\},"displayName":"Non Administrator","emails":\[\{"value":"non-admin@example.org","\$ref":"email/persona/non-admin"\},\{"value":"non-admin-1@example.org","\$ref":"email/persona/non-admin-1"\}\],"photos":\[\{"primary":true,"value":"https://my.example.org/photos/me.jpeg"\}\]\}`,
 			Status:  http.StatusOK,
 		},
 		{
 			Name:    "Patch SCIM active (admin)",
 			Method:  "PATCH",
-			Path:    "/identity/scim/v2/test/Users/non-admin",
+			Path:    "/scim/v2/test/Users/non-admin",
 			Persona: "admin",
 			Input:   `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"replace","path":"active","value":"true"},{"op":"replace","path":"displayName","value":"Updated Non Admin"},{"op":"replace","path":"profileUrl","value":"https://example.org/users/non-admin"},{"op":"replace","path":"preferredLanguage","value":"fr-FR"},{"op":"replace","path":"locale","value":"fr-CA"},{"op":"replace","path":"timezone","value":"America/Montreal"}]}`,
-			Output:  `^\{"schemas":\["urn:ietf:params:scim:schemas:core:2.0:User"\],"id":"non-admin","externalId":"non-admin","meta":\{"resourceType":"User","created":"2019-06-22T13:29:59Z","lastModified":"20..-..-..T..:..:..Z","location":"https://example.com/identity/scim/v2/test/Users/non-admin","version":"5"},"userName":"non-admin","name":\{"formatted":"Non-Administrator"\},"displayName":"Updated Non Admin","profileUrl":"https://example.org/users/non-admin","preferredLanguage":"fr-FR","locale":"fr-CA","timezone":"America/Montreal","active":true,"emails":\[\{"value":"non-admin@example.org","\$ref":"email/persona/non-admin"\},\{"value":"non-admin-1@example.org","\$ref":"email/persona/non-admin-1"\}\],"photos":\[\{"primary":true,"value":"https://my.example.org/photos/me.jpeg"\}\]\}`,
+			Output:  `^\{"schemas":\["urn:ietf:params:scim:schemas:core:2.0:User"\],"id":"non-admin","externalId":"non-admin","meta":\{"resourceType":"User","created":"2019-06-22T13:29:59Z","lastModified":"20..-..-..T..:..:..Z","location":"https://example.com/scim/v2/test/Users/non-admin","version":"5"},"userName":"non-admin","name":\{"formatted":"Non-Administrator"\},"displayName":"Updated Non Admin","profileUrl":"https://example.org/users/non-admin","preferredLanguage":"fr-FR","locale":"fr-CA","timezone":"America/Montreal","active":true,"emails":\[\{"value":"non-admin@example.org","\$ref":"email/persona/non-admin"\},\{"value":"non-admin-1@example.org","\$ref":"email/persona/non-admin-1"\}\],"photos":\[\{"primary":true,"value":"https://my.example.org/photos/me.jpeg"\}\]\}`,
 			Status:  http.StatusOK,
 		},
 		{
 			Name:    "Unlink connected account (default scope)",
 			Method:  "PATCH",
-			Path:    "/identity/scim/v2/test/Users/non-admin",
+			Path:    "/scim/v2/test/Users/non-admin",
 			Persona: "non-admin",
 			Input:   `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"remove","path":"emails[$ref eq \"email/persona/non-admin-1\"]","value":"foo"}]}`,
 			Output:  `^.*account_admin.*`,
@@ -578,7 +648,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Unlink connected account",
 			Method:  "PATCH",
-			Path:    "/identity/scim/v2/test/Users/non-admin",
+			Path:    "/scim/v2/test/Users/non-admin",
 			Persona: "non-admin",
 			Scope:   persona.AccountScope,
 			Input:   `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"remove","path":"emails[$ref eq \"email/persona/non-admin-1\"]"}]}`,
@@ -588,7 +658,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Unlink connected account (invalid remove last)",
 			Method:  "PATCH",
-			Path:    "/identity/scim/v2/test/Users/non-admin",
+			Path:    "/scim/v2/test/Users/non-admin",
 			Persona: "non-admin",
 			Scope:   persona.AccountScope,
 			Input:   `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"remove","path":"emails[value eq \"non-admin@example.org\"]"}]}`,
@@ -598,7 +668,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Delete SCIM me (default scope)",
 			Method:  "DELETE",
-			Path:    "/identity/scim/v2/test/Me",
+			Path:    "/scim/v2/test/Me",
 			Persona: "non-admin",
 			Output:  `^.*account_admin.*`,
 			Status:  http.StatusUnauthorized,
@@ -606,7 +676,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Delete SCIM me",
 			Method:  "DELETE",
-			Path:    "/identity/scim/v2/test/Me",
+			Path:    "/scim/v2/test/Me",
 			Persona: "non-admin",
 			Scope:   persona.AccountScope,
 			Status:  http.StatusOK,
@@ -614,7 +684,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Get SCIM me (after account deleted)",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Me",
+			Path:    "/scim/v2/test/Me",
 			Persona: "non-admin",
 			Scope:   persona.AccountScope,
 			Output:  `*{"code":5,"message":"*"}*`,
@@ -623,42 +693,42 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Get SCIM account (admin)",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Users/dr_joe_elixir",
+			Path:    "/scim/v2/test/Users/dr_joe_elixir",
 			Persona: "admin",
-			Output:  `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":"dr_joe_elixir","externalId":"dr_joe_elixir","meta":{"resourceType":"User","created":"2019-06-22T13:29:40Z","lastModified":"2019-06-22T18:07:20Z","location":"https://example.com/identity/scim/v2/test/Users/dr_joe_elixir","version":"1"},"userName":"dr_joe_elixir","name":{"formatted":"Dr. Joe (ELIXIR)"},"displayName":"Dr. Joe (ELIXIR)","active":true}`,
+			Output:  `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":"dr_joe_elixir","externalId":"dr_joe_elixir","meta":{"resourceType":"User","created":"2019-06-22T13:29:40Z","lastModified":"2019-06-22T18:07:20Z","location":"https://example.com/scim/v2/test/Users/dr_joe_elixir","version":"1"},"userName":"dr_joe_elixir","name":{"formatted":"Dr. Joe (ELIXIR)"},"displayName":"Dr. Joe (ELIXIR)","active":true,"emails":[{"value":"dr_joe@elixir.org","$ref":"email//dr_joe_elixir"},{"value":"dr_joe@faculty.example.edu","$ref":"email//dr_joe_faculty"}],"groups":[{"display":"Allowlisted Users","value":"allowlisted","$ref":"group/allowlisted/dr_joe@elixir.org"},{"display":"Allowlisted Users","value":"allowlisted","$ref":"group/allowlisted/dr_joe@faculty.example.edu"},{"display":"Lab Members","value":"lab","$ref":"group/lab/dr_joe@elixir.org"}]}`,
 			Status:  http.StatusOK,
 		},
 		{
 			Name:    "Get SCIM account",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Users/dr_joe_elixir",
+			Path:    "/scim/v2/test/Users/dr_joe_elixir",
 			Persona: "dr_joe_elixir",
 			Scope:   persona.AccountScope,
-			Output:  `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":"dr_joe_elixir","externalId":"dr_joe_elixir","meta":{"resourceType":"User","created":"2019-06-22T13:29:40Z","lastModified":"2019-06-22T18:07:20Z","location":"https://example.com/identity/scim/v2/test/Users/dr_joe_elixir","version":"1"},"userName":"dr_joe_elixir","name":{"formatted":"Dr. Joe (ELIXIR)"},"displayName":"Dr. Joe (ELIXIR)","active":true}`,
+			Output:  `*{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":"dr_joe_elixir","externalId":"dr_joe_elixir","meta":{"resourceType":"User","created":"2019-06-22T13:29:40Z","lastModified":"2019-06-22T18:07:20Z","location":"https://example.com/scim/v2/test/Users/dr_joe_elixir","version":"1"},"userName":"dr_joe_elixir","name":{"formatted":"Dr. Joe (ELIXIR)"},"displayName":"Dr. Joe (ELIXIR)","active":true,"emails":[*],"groups":[*]}*`,
 			Status:  http.StatusOK,
 		},
 		{
 			Name:    "Get SCIM account (default scope)",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Users/dr_joe_elixir",
+			Path:    "/scim/v2/test/Users/dr_joe_elixir",
 			Persona: "dr_joe_elixir",
-			Output:  `^.*urn:ietf:params:scim:schemas:core:2.0:User.*`,
+			Output:  `*urn:ietf:params:scim:schemas:core:2.0:User*"groups"*"allowlisted"*`,
 			Status:  http.StatusOK,
 		},
 		{
 			Name:    "Patch SCIM account",
 			Method:  "PATCH",
-			Path:    "/identity/scim/v2/test/Users/dr_joe_elixir",
+			Path:    "/scim/v2/test/Users/dr_joe_elixir",
 			Persona: "dr_joe_elixir",
 			Scope:   persona.AccountScope,
 			Input:   `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"replace","path":"name.formatted","value":"The good doc"},{"op":"replace","path":"name.givenName","value":"Joesph"},{"op":"replace","path":"name.familyName","value":"Doctor"}]}`,
-			Output:  `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":"dr_joe_elixir","externalId":"dr_joe_elixir","meta":{"resourceType":"User","created":"2019-06-22T13:29:40Z","lastModified":"2019-06-22T18:07:20Z","location":"https://example.com/identity/scim/v2/test/Users/dr_joe_elixir","version":"1"},"userName":"dr_joe_elixir","name":{"formatted":"The good doc","familyName":"Doctor","givenName":"Joesph"},"displayName":"Dr. Joe (ELIXIR)","active":true}`,
+			Output:  `*{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":"dr_joe_elixir","externalId":"dr_joe_elixir","meta":{"resourceType":"User","created":"2019-06-22T13:29:40Z","lastModified":"2019-06-22T18:07:20Z","location":"https://example.com/scim/v2/test/Users/dr_joe_elixir","version":"1"},"userName":"dr_joe_elixir","name":{"formatted":"The good doc","familyName":"Doctor","givenName":"Joesph"},"displayName":"Dr. Joe (ELIXIR)","active":true,"emails":[*]}*`,
 			Status:  http.StatusOK,
 		},
 		{
 			Name:    "Patch SCIM account (default scope)",
 			Method:  "PATCH",
-			Path:    "/identity/scim/v2/test/Users/dr_joe_elixir",
+			Path:    "/scim/v2/test/Users/dr_joe_elixir",
 			Persona: "dr_joe_elixir",
 			Input:   `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"replace","path":"name.formatted","value":"The good doc"},{"op":"replace","path":"name.givenName","value":"Joesph"},{"op":"replace","path":"name.familyName","value":"Doctor"}]}`,
 			Output:  `^.*account_admin.*`,
@@ -667,7 +737,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Delete SCIM account (default scope)",
 			Method:  "DELETE",
-			Path:    "/identity/scim/v2/test/Users/dr_joe_elixir",
+			Path:    "/scim/v2/test/Users/dr_joe_elixir",
 			Persona: "dr_joe_elixir",
 			Output:  `^.*account_admin.*`,
 			Status:  http.StatusUnauthorized,
@@ -675,7 +745,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Delete SCIM account",
 			Method:  "DELETE",
-			Path:    "/identity/scim/v2/test/Users/dr_joe_elixir",
+			Path:    "/scim/v2/test/Users/dr_joe_elixir",
 			Persona: "dr_joe_elixir",
 			Scope:   persona.AccountScope,
 			Status:  http.StatusOK,
@@ -683,7 +753,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Get deleted SCIM account",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Users/dr_joe_elixir",
+			Path:    "/scim/v2/test/Users/dr_joe_elixir",
 			Persona: "dr_joe_elixir",
 			Scope:   persona.AccountScope,
 			Output:  `*{"code":5,"message":"*"}*`,
@@ -692,7 +762,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Get deleted SCIM account (admin)",
 			Method:  "GET",
-			Path:    "/identity/scim/v2/test/Users/dr_joe_elixir",
+			Path:    "/scim/v2/test/Users/dr_joe_elixir",
 			Persona: "admin",
 			Output:  `^.*dr_joe_elixir.*`,
 			Status:  http.StatusOK,
@@ -700,7 +770,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Undelete SCIM account (admin)",
 			Method:  "PATCH",
-			Path:    "/identity/scim/v2/test/Users/dr_joe_elixir",
+			Path:    "/scim/v2/test/Users/dr_joe_elixir",
 			Persona: "admin",
 			Input:   `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"replace","path":"active","value":"true"}]}`,
 			Output:  `^.*dr_joe_elixir.*"active":true.*`,
@@ -709,7 +779,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:    "Link SCIM account error (missing X-Link-Authorization)",
 			Method:  "PATCH",
-			Path:    "/identity/scim/v2/test/Me",
+			Path:    "/scim/v2/test/Me",
 			Persona: "dr_joe_elixir",
 			Scope:   persona.LinkScope,
 			Input:   `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"add","path":"emails","value":"X-Link-Authorization"}]}`,
@@ -719,7 +789,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:        "Link SCIM account error (missing primary link scope)",
 			Method:      "PATCH",
-			Path:        "/identity/scim/v2/test/Me",
+			Path:        "/scim/v2/test/Me",
 			Persona:     "dr_joe_elixir",
 			Scope:       persona.AccountScope,
 			LinkPersona: "admin",
@@ -731,7 +801,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:        "Link SCIM account error (missing secondary link scope)",
 			Method:      "PATCH",
-			Path:        "/identity/scim/v2/test/Me",
+			Path:        "/scim/v2/test/Me",
 			Persona:     "dr_joe_elixir",
 			Scope:       persona.LinkScope,
 			LinkPersona: "admin",
@@ -743,7 +813,7 @@ func TestHandlers(t *testing.T) {
 		{
 			Name:        "Link SCIM account",
 			Method:      "PATCH",
-			Path:        "/identity/scim/v2/test/Me",
+			Path:        "/scim/v2/test/Me",
 			Persona:     "dr_joe_elixir",
 			Scope:       persona.LinkScope,
 			LinkPersona: "admin",
@@ -1846,7 +1916,7 @@ func TestConsent_Hydra_RememberedConsentOrInformationRelease(t *testing.T) {
 	}
 }
 
-func icSendTestRequest(t *testing.T, method, path, pathname, realm, personaName, clientID, clientSecret string, data proto.Message, s *Service, iss *persona.Server) *http.Response {
+func icSendTestQuery(t *testing.T, method, path, pathname, realm, personaName string, query url.Values, data proto.Message, s *Service, iss *persona.Server) *http.Response {
 	t.Helper()
 
 	var p *cpb.TestPersona
@@ -1854,6 +1924,11 @@ func icSendTestRequest(t *testing.T, method, path, pathname, realm, personaName,
 		p = iss.Config().TestPersonas[personaName]
 	}
 
+	clientID := ""
+	cid := query["client_id"]
+	if len(cid) > 0 {
+		clientID = cid[0]
+	}
 	hydraPublicURL := hydraURL
 	tok, _, err := persona.NewAccessToken(personaName, hydraPublicURL, clientID, noScope, p)
 	if err != nil {
@@ -1869,12 +1944,18 @@ func icSendTestRequest(t *testing.T, method, path, pathname, realm, personaName,
 
 	path = strings.ReplaceAll(path, "{realm}", realm)
 	path = strings.ReplaceAll(path, "{name}", pathname)
+	h := http.Header{"Authorization": []string{"Bearer " + string(tok)}}
+	return testhttp.SendTestRequest(t, s.Handler, method, path, query, &buf, h)
+}
+
+func icSendTestRequest(t *testing.T, method, path, pathname, realm, personaName, clientID, clientSecret string, data proto.Message, s *Service, iss *persona.Server) *http.Response {
+	t.Helper()
+
 	q := url.Values{
 		"client_id":     []string{clientID},
 		"client_secret": []string{clientSecret},
 	}
-	h := http.Header{"Authorization": []string{"Bearer " + string(tok)}}
-	return testhttp.SendTestRequest(t, s.Handler, method, path, q, &buf, h)
+	return icSendTestQuery(t, method, path, pathname, realm, personaName, q, data, s, iss)
 }
 
 func TestClients_Get(t *testing.T) {
@@ -2454,7 +2535,12 @@ func TestConfigClients_Update_Success(t *testing.T) {
 		ResponseTypes: defaultResponseTypes,
 	}
 
-	resp := sendConfigClientsUpdate(t, pname, clientName, "master", testClientID, testClientSecret, cli, s, iss)
+	query := url.Values{
+		"client_id":     []string{test.TestClientID},
+		"client_secret": []string{test.TestClientSecret},
+		"rotate_secret": []string{"true"},
+	}
+	resp := icSendTestQuery(t, http.MethodPatch, configClientsPath, clientName, "master", pname, query, &cpb.ConfigClientRequest{Item: cli}, s, iss)
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status=%d, wants %d", resp.StatusCode, http.StatusOK)
 	}
@@ -2478,6 +2564,57 @@ func TestConfigClients_Update_Success(t *testing.T) {
 
 	if len(h.UpdateClientReq.Secret) == 0 {
 		t.Errorf("should pass secret in hydra request")
+	}
+}
+
+func TestConfigClients_Update_NoSecret(t *testing.T) {
+	s, _, _, h, iss, err := setupHydraTest()
+	if err != nil {
+		t.Fatalf("setupHydraTest() failed: %v", err)
+	}
+
+	clientName := "test_client"
+
+	// Update the client RedirectUris.
+	cli := &cpb.Client{
+		RedirectUris: []string{"http://client.example.com"},
+	}
+
+	pname := "admin"
+
+	h.UpdateClientResp = &hydraapi.Client{
+		ClientID:      testClientID,
+		Name:          clientName,
+		RedirectURIs:  cli.RedirectUris,
+		Scope:         defaultScope,
+		GrantTypes:    defaultGrantTypes,
+		ResponseTypes: defaultResponseTypes,
+	}
+
+	resp := sendConfigClientsUpdate(t, pname, clientName, "master", testClientID, testClientSecret, cli, s, iss)
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status=%d, wants %d", resp.StatusCode, http.StatusOK)
+	}
+
+	got := &cpb.ConfigClientResponse{}
+	if err := jsonpb.Unmarshal(resp.Body, got); err != nil && err != io.EOF {
+		t.Fatalf("jsonpb.Unmarshal() failed: %v", err)
+	}
+
+	if got.ClientSecret != h.UpdateClientResp.Secret {
+		t.Errorf("got.ClientSecret = %s, wants %s", got.ClientSecret, h.UpdateClientResp.Secret)
+	}
+
+	if got.ClientSecret != "" {
+		t.Errorf("client secret should updated")
+	}
+
+	if len(h.UpdateClientReq.ClientID) == 0 {
+		t.Errorf("should pass client id in hydra request")
+	}
+
+	if len(h.UpdateClientReq.Secret) != 0 {
+		t.Errorf("should not pass secret in hydra request")
 	}
 }
 

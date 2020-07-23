@@ -42,6 +42,8 @@ const (
 	storageType    = "gcpDatastore"
 	storageVersion = "v0"
 	metaVersion    = "version"
+
+	maxRowsPerBatchOperation = 50000 // never exceed this number of rows without a LRO
 )
 
 // Data
@@ -207,15 +209,14 @@ func (s *Store) ReadTx(datatype, realm, user, id string, rev int64, content prot
 // MultiReadTx will not see the writes inside the transaction.
 // If realm is "" reads all realms.
 // if user is "" reads all users.
-// Returns the number of items matching the filter.
-// content is a map of user and id to values.
-func (s *Store) MultiReadTx(datatype, realm, user string, filters [][]storage.Filter, offset, pageSize int, content map[string]map[string]proto.Message, typ proto.Message, tx storage.Tx) (_ int, ferr error) {
+// Returns a results object and error.
+func (s *Store) MultiReadTx(datatype, realm, user, id string, filters [][]storage.Filter, offset, pageSize int, typ proto.Message, tx storage.Tx) (_ *storage.Results, ferr error) {
 	ctx := context.Background() /* TODO: pass ctx from request */
 	if tx == nil {
 		var err error
 		tx, err = s.Tx(false)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		defer func() {
 			err := tx.Finish()
@@ -235,8 +236,11 @@ func (s *Store) MultiReadTx(datatype, realm, user string, filters [][]storage.Fi
 	if realm != storage.AllRealms {
 		q = q.Filter("realm =", realm)
 	}
-	if user != storage.DefaultUser {
+	if user != storage.MatchAllUsers {
 		q = q.Filter("user_id = ", user)
+	}
+	if id != storage.MatchAllIDs {
+		q = q.Filter("id = ", id)
 	}
 	q = q.Filter("rev = ", storage.LatestRev).Order("id")
 	if len(filters) == 0 {
@@ -246,8 +250,8 @@ func (s *Store) MultiReadTx(datatype, realm, user string, filters [][]storage.Fi
 		offset = 0
 	}
 
+	results := storage.NewResults()
 	it := s.client.Run(ctx, q)
-	count := 0
 	for {
 		var e Entity
 		_, err := it.Next(&e)
@@ -255,14 +259,14 @@ func (s *Store) MultiReadTx(datatype, realm, user string, filters [][]storage.Fi
 			break
 		}
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		if len(e.Content) == 0 {
 			continue
 		}
 		p := proto.Clone(typ)
 		if err := jsonpb.Unmarshal(strings.NewReader(e.Content), p); err != nil {
-			return 0, err
+			return nil, err
 		}
 		if !storage.MatchProtoFilters(filters, p) {
 			continue
@@ -273,15 +277,17 @@ func (s *Store) MultiReadTx(datatype, realm, user string, filters [][]storage.Fi
 			offset--
 			continue
 		}
-		if pageSize == 0 || pageSize > count {
-			if _, ok := content[e.User]; !ok {
-				content[e.User] = make(map[string]proto.Message)
-			}
-			content[e.User][e.ID] = p
+		if pageSize == 0 || pageSize > results.MatchCount {
+			results.Entries = append(results.Entries, &storage.Entry{
+				Realm:   realm,
+				GroupID: e.User,
+				ItemID:  e.ID,
+				Item:    p,
+			})
 		}
-		count++
+		results.MatchCount++
 	}
-	return count, nil
+	return results, nil
 }
 
 // ReadHistory reads the history.
@@ -436,7 +442,8 @@ func (s *Store) DeleteTx(datatype, realm, user, id string, rev int64, tx storage
 	return nil
 }
 
-// MultiDeleteTx deletes all records of a certain data type within a realm.
+// MultiDeleteTx deletes many records of a certain data type within a realm.
+// Is limited by maxRowsPerBatchOperation before needing to use an LRO instead.
 // If user is "", deletes for all users.
 func (s *Store) MultiDeleteTx(datatype, realm, user string, tx storage.Tx) error {
 	q := datastore.NewQuery(entityKind).
@@ -449,51 +456,77 @@ func (s *Store) MultiDeleteTx(datatype, realm, user string, tx storage.Tx) error
 	q = q.Filter("rev = ", storage.LatestRev).
 		Order("id")
 
-	_, err := s.multiDelete(q)
+	_, err := s.multiDelete(context.Background() /* TODO: pass ctx from request */, q, maxRowsPerBatchOperation)
 	return err
 }
 
-// Wipe deletes all data and history within a realm.
-// If realm is "" deletes for all realms.
-func (s *Store) Wipe(realm string) error {
-	glog.Infof("Datastore wipe project %q service %q realm %q: started", s.project, s.service, realm)
+// Wipe deletes all data and history within a realm but no more than maxEntries.
+// If realm is "" deletes for all realms; use all realms mode with caution as it will remove the master realm's config too.
+// Returns count of deleted items and error.
+func (s *Store) Wipe(ctx context.Context, realm string, batchNum, maxEntries int) (int, error) {
+	if batchNum == 0 {
+		glog.Infof("Datastore wipe project %q service %q realm %q: started", s.project, s.service, realm)
+	}
 	results := make(map[string]int)
+	if maxEntries <= 0 {
+		maxEntries = maxRowsPerBatchOperation
+	}
+	deleted := 0
+	max := maxEntries
 	for _, kind := range []string{historyKind, entityKind} {
 		q := datastore.NewQuery(kind).
 			Filter("service =", s.service)
 		if realm != storage.AllRealms {
 			q = q.Filter("realm =", realm)
 		}
-		total, err := s.multiDelete(q)
+		if maxEntries > 0 {
+			q.Limit(max)
+		}
+		total, err := s.multiDelete(ctx, q, max)
 		if err != nil {
-			return err
+			return deleted, err
 		}
 		results[kind] = total
+		max -= total
+		deleted += total
+		if max <= 0 {
+			return deleted, nil
+		}
 	}
 	glog.Infof("Datastore wipe project %q service %q realm %q: completed results: %#v", s.project, s.service, realm, results)
-	return nil
+	return deleted, nil
 }
 
 // multiDelete all entities matching the provided query.
 // Returns the total number of items matching the query.
-func (s *Store) multiDelete(q *datastore.Query) (int, error) {
-	ctx := context.Background() /* TODO: pass ctx from request */
+func (s *Store) multiDelete(ctx context.Context, q *datastore.Query, maxEntries int) (int, error) {
 	keys, err := s.client.GetAll(ctx, q.KeysOnly(), nil)
 	if err != nil {
 		return 0, err
 	}
+	if maxEntries <= 0 {
+		maxEntries = maxRowsPerBatchOperation
+	}
+	max := maxEntries
 
 	// Datastore API doesn't allow more than 500 per MultiDelete rpc.
-	const multiDeleteChunkSize = 400
+	chunkSize := 400
 	total := len(keys)
-	for i := 0; i < total; i += multiDeleteChunkSize {
-		end := i + multiDeleteChunkSize
+	for i := 0; i < total; i += chunkSize {
+		if chunkSize > max {
+			chunkSize = max
+		}
+		end := i + chunkSize
 		if total < end {
 			end = total
 		}
 		chunk := keys[i:end]
-		if err := s.client.DeleteMulti(context.Background() /* TODO: pass ctx from request */, chunk); err != nil {
+		if err := s.client.DeleteMulti(ctx, chunk); err != nil {
 			return total, err
+		}
+		max -= chunkSize
+		if max <= 0 {
+			return maxEntries, nil
 		}
 	}
 	return total, nil

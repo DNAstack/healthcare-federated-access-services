@@ -285,9 +285,9 @@ func (c *adminClientHandler) Patch(r *http.Request, name string) (proto.Message,
 	}
 
 	out := proto.Clone(input).(*pb.Client)
-	var sec = uuid.New()
-	if cs := c.s.ClientSecret(c.tx, c.item.ClientId); len(cs) != 0 {
-		sec = cs
+	sec := ""
+	if httputils.QueryParam(r, "rotate_secret") == "true" {
+		sec = uuid.New()
 	}
 
 	if c.useHydra {

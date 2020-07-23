@@ -15,6 +15,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -35,25 +36,27 @@ const (
 
 // MemoryStorage is designed as a single threading storage. Will throw exception if multiple TX request.
 type MemoryStorage struct {
-	service   string
-	path      string
-	pathParts []string
-	cache     *StorageCache
-	fs        *FileStorage
-	deleted   map[string]bool
-	lock      chan bool
-	lastLock  time.Time
+	service     string
+	path        string
+	pathParts   []string
+	cache       *StorageCache
+	fs          *FileStorage
+	deleted     map[string]bool
+	wipedRealms map[string]bool
+	lock        chan bool
+	lastLock    time.Time
 }
 
 func NewMemoryStorage(service, path string) *MemoryStorage {
 	return &MemoryStorage{
-		service:  service,
-		path:     path,
-		cache:    NewStorageCache(),
-		fs:       NewFileStorage(service, path),
-		deleted:  make(map[string]bool),
-		lock:     make(chan bool, 1),
-		lastLock: time.Unix(0, 0),
+		service:     service,
+		path:        path,
+		cache:       NewStorageCache(),
+		fs:          NewFileStorage(service, path),
+		deleted:     make(map[string]bool),
+		wipedRealms: make(map[string]bool),
+		lock:        make(chan bool, 1),
+		lastLock:    time.Unix(0, 0),
 	}
 }
 
@@ -71,7 +74,7 @@ func (m *MemoryStorage) Exists(datatype, realm, user, id string, rev int64) (boo
 	if _, ok := m.cache.GetEntity(fname); ok {
 		return true, nil
 	}
-	if m.deleted[fname] {
+	if m.deleted[fname] || m.wipedRealms[realm] {
 		return false, nil
 	}
 	return m.fs.Exists(datatype, realm, user, id, rev)
@@ -104,7 +107,7 @@ func (m *MemoryStorage) ReadTx(datatype, realm, user, id string, rev int64, cont
 		return nil
 	}
 
-	if m.deleted[fname] {
+	if m.deleted[fname] || m.wipedRealms[realm] {
 		return fmt.Errorf("not found: %q", fname)
 	}
 
@@ -117,12 +120,12 @@ func (m *MemoryStorage) ReadTx(datatype, realm, user, id string, rev int64, cont
 }
 
 // MultiReadTx reads a set of objects matching the input parameters and filters
-func (m *MemoryStorage) MultiReadTx(datatype, realm, user string, filters [][]Filter, offset, pageSize int, content map[string]map[string]proto.Message, typ proto.Message, tx Tx) (_ int, ferr error) {
+func (m *MemoryStorage) MultiReadTx(datatype, realm, user, id string, filters [][]Filter, offset, pageSize int, typ proto.Message, tx Tx) (_ *Results, ferr error) {
 	if tx == nil {
 		var err error
 		tx, err = m.fs.Tx(false)
 		if err != nil {
-			return 0, fmt.Errorf("file read lock error: %v", err)
+			return nil, fmt.Errorf("file read lock error: %v", err)
 		}
 		defer func() {
 			err := tx.Finish()
@@ -135,9 +138,12 @@ func (m *MemoryStorage) MultiReadTx(datatype, realm, user string, filters [][]Fi
 	if pageSize > MaxPageSize {
 		pageSize = MaxPageSize
 	}
-	count := 0
-	err := m.findPath(datatype, realm, user, typ, func(path, userMatch, idMatch string, p proto.Message) error {
-		if m.deleted[m.fname(datatype, realm, userMatch, idMatch, LatestRev)] {
+	results := NewResults()
+	err := m.findPath(datatype, realm, user, id, typ, func(path, userMatch, idMatch string, p proto.Message) error {
+		if m.deleted[m.fname(datatype, realm, userMatch, idMatch, LatestRev)] || m.wipedRealms[realm] {
+			return nil
+		}
+		if id != MatchAllIDs && idMatch != id {
 			return nil
 		}
 		if !MatchProtoFilters(filters, p) {
@@ -147,23 +153,23 @@ func (m *MemoryStorage) MultiReadTx(datatype, realm, user string, filters [][]Fi
 			offset--
 			return nil
 		}
-		if pageSize > count {
-			userContent, ok := content[userMatch]
-			if !ok {
-				content[userMatch] = make(map[string]proto.Message)
-				userContent = content[userMatch]
-			}
-			userContent[idMatch] = p
+		if pageSize > results.MatchCount {
+			results.Entries = append(results.Entries, &Entry{
+				Realm:   realm,
+				GroupID: userMatch,
+				ItemID:  idMatch,
+				Item:    p,
+			})
 		}
-		count++
+		results.MatchCount++
 		return nil
 	})
-	return count, err
+	return results, err
 }
 
-func (m *MemoryStorage) findPath(datatype, realm, user string, typ proto.Message, fn func(string, string, string, proto.Message) error) error {
+func (m *MemoryStorage) findPath(datatype, realm, user, id string, typ proto.Message, fn func(string, string, string, proto.Message) error) error {
 	searchUser := user
-	if user == DefaultUser {
+	if user == MatchAllUsers {
 		searchUser = "(.*)"
 	} else {
 		searchUser = "(" + user + ")"
@@ -172,12 +178,18 @@ func (m *MemoryStorage) findPath(datatype, realm, user string, typ proto.Message
 	if realm == AllRealms {
 		searchRealm = "(.*)"
 	}
-	extractID := m.fs.fname(datatype, searchRealm, searchUser, "(.*)", LatestRev)
+	searchID := id
+	if id == MatchAllIDs {
+		searchID = "(.*)"
+	} else {
+		searchID = "(" + id + ")"
+	}
+	extractID := m.fs.fname(datatype, searchRealm, searchUser, searchID, LatestRev)
 	re, err := regexp.Compile(extractID)
 	if err != nil {
 		return fmt.Errorf("file extract ID %q regexp error: %v", extractID, err)
 	}
-	defaultUserID := m.fs.fname(datatype, realm, DefaultUser, "(.*)", LatestRev)
+	defaultUserID := m.fs.fname(datatype, realm, DefaultUser, searchID, LatestRev)
 	dure, err := regexp.Compile(defaultUserID)
 	if err != nil {
 		return fmt.Errorf("file extract ID %q regexp error: %v", defaultUserID, err)
@@ -382,16 +394,18 @@ func (m *MemoryStorage) MultiDeleteTx(datatype, realm, user string, tx Tx) (ferr
 		}()
 	}
 
-	return m.findPath(datatype, realm, user, nil, func(path, userMatch, idMatch string, p proto.Message) error {
+	return m.findPath(datatype, realm, user, MatchAllIDs, nil, func(path, userMatch, idMatch string, p proto.Message) error {
 		return m.DeleteTx(datatype, realm, userMatch, idMatch, LatestRev, tx)
 	})
 }
 
-func (m *MemoryStorage) Wipe(realm string) error {
-	// Wipe everything, not just for the realm provided.
+func (m *MemoryStorage) Wipe(ctx context.Context, realm string, batchNum, maxEntries int) (int, error) {
+	// Wipe everything, not just for the realm provided or the maxEntries.
+	count := len(m.cache.entityCache) + len(m.cache.historyCache)
 	m.cache = NewStorageCache()
 	m.deleted = make(map[string]bool)
-	return nil
+	m.wipedRealms[realm] = true
+	return count, nil
 }
 
 func (m *MemoryStorage) Tx(update bool) (Tx, error) {

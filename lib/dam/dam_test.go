@@ -54,6 +54,7 @@ import (
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/serviceinfo" /* copybara-comment: serviceinfo */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage" /* copybara-comment: storage */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/test/fakehydra" /* copybara-comment: fakehydra */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/test/fakelro" /* copybara-comment: fakelro */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/test/fakeoidcissuer" /* copybara-comment: fakeoidcissuer */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/test/fakesdl" /* copybara-comment: fakesdl */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/test/httptestclient" /* copybara-comment: httptestclient */
@@ -120,6 +121,7 @@ func TestHandlers(t *testing.T) {
 		HydraPublicURL: hydraPublicURL,
 		HydraSyncFreq:  time.Nanosecond,
 		Encryption:     fakeencryption.New(),
+		LRO:            fakelro.New(),
 	})
 	tests := []test.HandlerTest{
 		// Realm tests.
@@ -156,7 +158,7 @@ func TestHandlers(t *testing.T) {
 			Method:  "DELETE",
 			Path:    "/dam/v1alpha/test",
 			Persona: "admin",
-			Output:  ``,
+			Output:  `*{"id":"*","state":"queued","details":{},"uri":"test.org/dam/v1alpha/master/lro/*-*-*-*"}*`,
 			Status:  http.StatusOK,
 		},
 		{
@@ -237,6 +239,20 @@ func TestHandlers(t *testing.T) {
 			Persona: "admin",
 			Output:  `^.*not allowed`,
 			Status:  http.StatusBadRequest,
+		},
+		{
+			Method:  "GET",
+			Path:    "/dam/v1alpha/master/lro/00000000-0000-0000-0000-000000000001",
+			Persona: "admin",
+			Output:  `*{"id":"00000000-0000-0000-0000-000000000001","state":"completed","details":{*COMPLETED*}}*`,
+			Status:  http.StatusOK,
+		},
+		{
+			Method:  "GET",
+			Path:    "/dam/v1alpha/master/lro/00000000-0000-0000-0000-000000000045",
+			Persona: "admin",
+			Output:  `*{"id":"00000000-0000-0000-0000-000000000045","state":"purged"*}*`,
+			Status:  http.StatusOK,
 		},
 		{
 			Method:  "GET",
@@ -581,7 +597,7 @@ func TestHandlers(t *testing.T) {
 		},
 		{
 			Method:  "DELETE",
-			Path:    "/dam/v1alpha/test/config/policies/whitelist",
+			Path:    "/dam/v1alpha/test/config/policies/allowlist",
 			Persona: "admin",
 			Output:  `*built-in policy*`,
 			Status:  http.StatusBadRequest,
@@ -930,6 +946,7 @@ func TestMinConfig(t *testing.T) {
 		HidePolicyBasis:  true,
 		HideRejectDetail: true,
 		Encryption:       fakeencryption.New(),
+		LRO:              fakelro.New(),
 	}
 	s := NewService(opts)
 	verifyService(t, s.domainURL, opts.Domain, "domainURL")
@@ -983,6 +1000,7 @@ func TestConfig_Add_NilTestPersonas(t *testing.T) {
 		HydraPublicURL: hydraPublicURL,
 		HydraSyncFreq:  time.Nanosecond,
 		Encryption:     fakeencryption.New(),
+		LRO:            fakelro.New(),
 	})
 
 	cfg, err := s.loadConfig(nil, storage.DefaultRealm)
@@ -1028,6 +1046,7 @@ func TestConfig_Add_NilResource(t *testing.T) {
 		HydraPublicURL: hydraPublicURL,
 		HydraSyncFreq:  time.Nanosecond,
 		Encryption:     fakeencryption.New(),
+		LRO:            fakelro.New(),
 	})
 
 	cfg, err := s.loadConfig(nil, storage.DefaultRealm)
@@ -1118,6 +1137,7 @@ func setupAuthorizationTest(t *testing.T) *authTestContext {
 		HydraAdminURL:  hydraAdminURL,
 		HydraPublicURL: hydraPublicURL,
 		Encryption:     fakeencryption.New(),
+		LRO:            fakelro.New(),
 	})
 
 	cfg, err := s.loadConfig(nil, storage.DefaultRealm)
@@ -1324,7 +1344,7 @@ func TestCheckAuthorization_RejectedPolicy(t *testing.T) {
 	}
 }
 
-func TestCheckAuthorization_Whitelist(t *testing.T) {
+func TestCheckAuthorization_Allowlist(t *testing.T) {
 	auth := setupAuthorizationTest(t)
 	auth.resource = "dataset_example"
 
@@ -1342,28 +1362,28 @@ func TestCheckAuthorization_Whitelist(t *testing.T) {
 		t.Errorf("setup errutil.ErrorReason() = %s want %s", errutil.ErrorReason(err), errRejectedPolicy)
 	}
 
-	// Now try again with being on the whitelist.
+	// Now try again with being on the allowlist.
 	auth.cfg.Resources[auth.resource].Views[auth.view].Roles[auth.role].Policies = []*pb.ViewRole_ViewPolicy{{
-		Name: whitelistPolicyName,
+		Name: allowlistPolicyName,
 		Args: map[string]string{
 			"users": "abc@example.org;dr_joe@faculty.example.edu;foo@bar.org",
 		},
 	}}
 	err = checkAuthorization(auth.ctx, id, auth.ttl, auth.resource, auth.view, auth.role, auth.cfg, test.TestClientID, auth.dam.ValidateCfgOpts(storage.DefaultRealm, nil))
 	if err != nil {
-		t.Errorf("whitelist by email: checkAuthorization(ctx, id, %v, %q, %q, %q, cfg, %q) failed: %v", auth.ttl, auth.resource, auth.view, auth.role, test.TestClientID, err)
+		t.Errorf("allowlist by email: checkAuthorization(ctx, id, %v, %q, %q, %q, cfg, %q) failed: %v", auth.ttl, auth.resource, auth.view, auth.role, test.TestClientID, err)
 	}
 
-	// Use group membership whitelist
+	// Use group membership allowlist
 	auth.cfg.Resources[auth.resource].Views[auth.view].Roles[auth.role].Policies = []*pb.ViewRole_ViewPolicy{{
-		Name: whitelistPolicyName,
+		Name: allowlistPolicyName,
 		Args: map[string]string{
-			"groups": "whitelisted",
+			"groups": "allowlisted",
 		},
 	}}
 	err = checkAuthorization(auth.ctx, id, auth.ttl, auth.resource, auth.view, auth.role, auth.cfg, test.TestClientID, auth.dam.ValidateCfgOpts(storage.DefaultRealm, nil))
 	if err != nil {
-		t.Errorf("whitelist by group membership: checkAuthorization(ctx, id, %v, %q, %q, %q, cfg, %q) failed: %v", auth.ttl, auth.resource, auth.view, auth.role, test.TestClientID, err)
+		t.Errorf("allowlist by group membership: checkAuthorization(ctx, id, %v, %q, %q, %q, cfg, %q) failed: %v", auth.ttl, auth.resource, auth.view, auth.role, test.TestClientID, err)
 	}
 }
 
@@ -1387,6 +1407,7 @@ func Test_populateIdentityVisas_oidc_and_jku(t *testing.T) {
 		HydraPublicURL: hydraPublicURL,
 		HydraSyncFreq:  time.Nanosecond,
 		Encryption:     fakeencryption.New(),
+		LRO:            fakelro.New(),
 	})
 
 	cfg, err := s.loadConfig(nil, storage.DefaultRealm)
@@ -1523,6 +1544,7 @@ func setupHydraTest(readOnlyMasterRealm bool) (*Service, *pb.DamConfig, *pb.DamS
 		HydraPublicURL: hydraPublicURL,
 		HydraSyncFreq:  time.Nanosecond,
 		Encryption:     fakeencryption.New(),
+		LRO:            fakelro.New(),
 	})
 
 	cfg, err := s.loadConfig(nil, storage.DefaultRealm)
@@ -3092,7 +3114,7 @@ func TestResourceTokens_TokenExpiry(t *testing.T) {
 	}
 }
 
-func damSendTestRequest(t *testing.T, method, path, pathname, realm, personaName, clientID, clientSecret string, data proto.Message, s *Service, iss *persona.Server) *http.Response {
+func damSendTestQuery(t *testing.T, method, path, pathname, realm, personaName string, query url.Values, data proto.Message, s *Service, iss *persona.Server) *http.Response {
 	t.Helper()
 
 	var p *cpb.TestPersona
@@ -3100,6 +3122,11 @@ func damSendTestRequest(t *testing.T, method, path, pathname, realm, personaName
 		p = iss.Config().TestPersonas[personaName]
 	}
 
+	clientID := ""
+	cid := query["client_id"]
+	if len(cid) > 0 {
+		clientID = cid[0]
+	}
 	tok, _, err := persona.NewAccessToken(personaName, hydraPublicURL, clientID, noScope, p)
 	if err != nil {
 		t.Fatalf("persona.NewAccessToken(%q, %q, _, _) failed: %v", personaName, hydraPublicURL, err)
@@ -3114,12 +3141,18 @@ func damSendTestRequest(t *testing.T, method, path, pathname, realm, personaName
 
 	path = strings.ReplaceAll(path, "{realm}", realm)
 	path = strings.ReplaceAll(path, "{name}", pathname)
+	h := http.Header{"Authorization": []string{"Bearer " + string(tok)}}
+	return testhttp.SendTestRequest(t, s.Handler, method, path, query, &buf, h)
+}
+
+func damSendTestRequest(t *testing.T, method, path, pathname, realm, personaName, clientID, clientSecret string, data proto.Message, s *Service, iss *persona.Server) *http.Response {
+	t.Helper()
+
 	q := url.Values{
 		"client_id":     []string{clientID},
 		"client_secret": []string{clientSecret},
 	}
-	h := http.Header{"Authorization": []string{"Bearer " + string(tok)}}
-	return testhttp.SendTestRequest(t, s.Handler, method, path, q, &buf, h)
+	return damSendTestQuery(t, method, path, pathname, realm, personaName, q, data, s, iss)
 }
 
 func TestClients_Get(t *testing.T) {
@@ -3690,7 +3723,12 @@ func TestConfigClients_Update_Success(t *testing.T) {
 		ResponseTypes: defaultResponseTypes,
 	}
 
-	resp := sendConfigClientsUpdate(t, pname, clientName, "master", test.TestClientID, test.TestClientSecret, cli, s, iss)
+	query := url.Values{
+		"client_id":     []string{test.TestClientID},
+		"client_secret": []string{test.TestClientSecret},
+		"rotate_secret": []string{"true"},
+	}
+	resp := damSendTestQuery(t, http.MethodPatch, configClientPath, clientName, "master", pname, query, &cpb.ConfigClientRequest{Item: cli}, s, iss)
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status=%d, wants %d", resp.StatusCode, http.StatusOK)
 	}
@@ -3714,6 +3752,57 @@ func TestConfigClients_Update_Success(t *testing.T) {
 
 	if len(h.UpdateClientReq.Secret) == 0 {
 		t.Errorf("should pass secret in hydra request")
+	}
+}
+
+func TestConfigClients_Update_NoSecret(t *testing.T) {
+	s, _, _, h, iss, err := setupHydraTest(false)
+	if err != nil {
+		t.Fatalf("setupHydraTest() failed: %v", err)
+	}
+
+	clientName := "test_client"
+
+	// Update the client RedirectUris.
+	cli := &cpb.Client{
+		RedirectUris: []string{"http://client.example.com"},
+	}
+
+	pname := "admin"
+
+	h.UpdateClientResp = &hydraapi.Client{
+		ClientID:      test.TestClientID,
+		Name:          clientName,
+		RedirectURIs:  cli.RedirectUris,
+		Scope:         defaultScope,
+		GrantTypes:    defaultGrantTypes,
+		ResponseTypes: defaultResponseTypes,
+	}
+
+	resp := sendConfigClientsUpdate(t, pname, clientName, "master", test.TestClientID, test.TestClientSecret, cli, s, iss)
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status=%d, wants %d", resp.StatusCode, http.StatusOK)
+	}
+
+	got := &cpb.ConfigClientResponse{}
+	if err := jsonpb.Unmarshal(resp.Body, got); err != nil && err != io.EOF {
+		t.Fatalf("jsonpb.Unmarshal() failed: %v", err)
+	}
+
+	if got.ClientSecret != h.UpdateClientResp.Secret {
+		t.Errorf("got.ClientSecret = %s, wants %s", got.ClientSecret, h.UpdateClientResp.Secret)
+	}
+
+	if got.ClientSecret != "" {
+		t.Errorf("client secret should not be updated")
+	}
+
+	if len(h.UpdateClientReq.ClientID) == 0 {
+		t.Errorf("should pass client id in hydra request")
+	}
+
+	if len(h.UpdateClientReq.Secret) != 0 {
+		t.Errorf("should not pass secret in hydra request")
 	}
 }
 

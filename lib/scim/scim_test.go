@@ -25,6 +25,7 @@ import (
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage" /* copybara-comment: storage */
 
 	cpb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/common/v1" /* copybara-comment: go_proto */
+	spb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/scim/v2" /* copybara-comment: go_proto */
 )
 
 func TestLoadAccount(t *testing.T) {
@@ -154,7 +155,7 @@ func TestLookupAccount_Error(t *testing.T) {
 }
 
 func TestLoadGroup(t *testing.T) {
-	groupName := "whitelisted"
+	groupName := "allowlisted"
 	realm := "test"
 	s := New(storage.NewMemoryStorage("ic-min", "testdata/config"))
 	group, err := s.LoadGroup(groupName, realm, nil)
@@ -164,7 +165,7 @@ func TestLoadGroup(t *testing.T) {
 	if group == nil {
 		t.Fatalf("LoadGroup(%q, %q, nil) = (%+v, _) group not found", groupName, realm, group)
 	}
-	want := "whitelisted"
+	want := "allowlisted"
 	if group.Id != want {
 		t.Fatalf("LoadGroup(%q, %q, nil) = (%+v, _) ID mismatch: got %q, want %q", groupName, realm, group, group.Id, want)
 	}
@@ -184,8 +185,8 @@ func TestLoadGroup_NotFound(t *testing.T) {
 }
 
 func TestLoadGroupMember(t *testing.T) {
-	groupName := "whitelisted"
-	memberName := "dr_joe@faculty.example.edu"
+	groupName := "allowlisted"
+	memberName := "dr_joe@elixir.org"
 	realm := "test"
 	s := New(storage.NewMemoryStorage("ic-min", "testdata/config"))
 	member, err := s.LoadGroupMember(groupName, memberName, realm, nil)
@@ -201,7 +202,7 @@ func TestLoadGroupMember(t *testing.T) {
 }
 
 func TestLoadGroupMember_NotFound(t *testing.T) {
-	groupName := "whitelisted"
+	groupName := "allowlisted"
 	memberName := "no_exists@faculty.example.edu"
 	realm := "test"
 	s := New(storage.NewMemoryStorage("ic-min", "testdata/config"))
@@ -211,5 +212,91 @@ func TestLoadGroupMember_NotFound(t *testing.T) {
 	}
 	if member != nil {
 		t.Fatalf("LoadGroupMember(%q, %q, %q, nil) = (%+v, _) expected nil member", groupName, memberName, realm, member)
+	}
+}
+
+func TestLoadGroupMembershipForUser(t *testing.T) {
+	realm := "test"
+	s := New(storage.NewMemoryStorage("ic-min", "testdata/config"))
+	tests := []struct {
+		name               string
+		user               *spb.User
+		resolveDisplayName bool
+		want               []*spb.Attribute
+	}{
+		{
+			name: "empty",
+			user: &spb.User{},
+			want: []*spb.Attribute{},
+		},
+		{
+			name: "id only",
+			user: &spb.User{Id: "dr_joe_elixir"},
+			want: []*spb.Attribute{},
+		},
+		{
+			name: "empty email entries",
+			user: &spb.User{
+				Id:     "dr_joe_elixir",
+				Emails: []*spb.Attribute{{}, {}},
+			},
+			want: []*spb.Attribute{},
+		},
+		{
+			name: "one email match",
+			user: &spb.User{
+				Id: "dr_joe_elixir",
+				Emails: []*spb.Attribute{
+					{Value: "dr_joe@faculty.example.edu"},
+				},
+			},
+			resolveDisplayName: true,
+			want: []*spb.Attribute{
+				{Display: "Allowlisted Users", Value: "allowlisted", Ref: "group/allowlisted/dr_joe@faculty.example.edu"},
+			},
+		},
+		{
+			name: "two email match",
+			user: &spb.User{
+				Id: "dr_joe_elixir",
+				Emails: []*spb.Attribute{
+					{Value: "dr_joe@elixir.org"},
+					{Value: "dr_joe@faculty.example.edu"},
+				},
+			},
+			resolveDisplayName: true,
+			want: []*spb.Attribute{
+				{Display: "Allowlisted Users", Value: "allowlisted", Ref: "group/allowlisted/dr_joe@elixir.org"},
+				{Display: "Allowlisted Users", Value: "allowlisted", Ref: "group/allowlisted/dr_joe@faculty.example.edu"},
+				{Display: "Lab Members", Value: "lab", Ref: "group/lab/dr_joe@elixir.org"},
+			},
+		},
+		{
+			name: "two email match - no displayName",
+			user: &spb.User{
+				Id: "dr_joe_elixir",
+				Emails: []*spb.Attribute{
+					{Value: "dr_joe@elixir.org"},
+					{Value: "dr_joe@faculty.example.edu"},
+				},
+			},
+			resolveDisplayName: false,
+			want: []*spb.Attribute{
+				{Value: "allowlisted", Ref: "group/allowlisted/dr_joe@elixir.org"},
+				{Value: "allowlisted", Ref: "group/allowlisted/dr_joe@faculty.example.edu"},
+				{Value: "lab", Ref: "group/lab/dr_joe@elixir.org"},
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := s.LoadGroupMembershipForUser(tc.user, realm, tc.resolveDisplayName, nil); err != nil {
+				t.Fatalf("LoadGroupMembershipForUser(_, %q, nil) failed: %v", realm, err)
+			}
+			got := tc.user.Groups
+			if d := cmp.Diff(tc.want, got, protocmp.Transform(), cmpopts.EquateEmpty()); len(d) > 0 {
+				t.Fatalf("mismatched group membership (-want +got): %v", d)
+			}
+		})
 	}
 }
