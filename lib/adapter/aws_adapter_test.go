@@ -1,17 +1,31 @@
+// Copyright 2020 Google LLC.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package adapter_test
 
 import (
+	"context"
+	"regexp"
 	"testing"
 	"time"
 
-	"golang.org/x/net/context"
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/adapter" /* copybara-comment: adapter */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/aws" /* copybara-comment: aws */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh" /* copybara-comment: ga4gh */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage" /* copybara-comment: storage */
 
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/adapter"
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/aws"
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh"
-	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/storage"
-
-	pb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/dam/v1"
+	pb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/dam/v1" /* copybara-comment: go_proto */
 )
 
 func TestAwsAdapter(t *testing.T) {
@@ -32,7 +46,7 @@ func TestAwsAdapter(t *testing.T) {
 		t.Fatalf("new AWS adapter: %v", err)
 	}
 	adapters.ByAdapterName[adapter.AwsAdapterName] = aws
-	for k,v := range aws.Descriptors() {
+	for k, v := range aws.Descriptors() {
 		adapters.ByServiceName[k] = aws
 		adapters.Descriptors[k] = v
 	}
@@ -56,14 +70,14 @@ func TestAwsAdapter(t *testing.T) {
 	s3GrantRole := "viewer"
 	identity := &ga4gh.Identity{
 		Subject: "marc",
-		Issuer:  "https://idp1.org",
+		Issuer:  "https://example.org",
 	}
 	s3SRole, err := adapter.ResolveServiceRole(s3GrantRole, s3View, res, &cfg)
 	if err != nil {
 		t.Fatalf("ResolveServiceRole(%q, view, res, cfg): error %v", s3GrantRole, err)
 	}
 
-	//redshift view test
+	// redshift view test
 	redshiftTmpl := "redshift"
 	redshiftSt := cfg.ServiceTemplates[redshiftTmpl]
 	redshiftVname := "redshift-test"
@@ -78,10 +92,11 @@ func TestAwsAdapter(t *testing.T) {
 		t.Fatalf("ResolveServiceRole(%q, view, res, cfg): error %v", redshiftGrantRole, err)
 	}
 
-	tests := []struct{
-		name   string
-		input  *adapter.Action
-		fail   bool
+	tests := []struct {
+		name     string
+		input    *adapter.Action
+		fail     bool
+		errRegex string
 	}{
 		{
 			name: "s3 access token for role",
@@ -129,7 +144,8 @@ func TestAwsAdapter(t *testing.T) {
 				TTL:             169 * time.Hour,
 				View:            s3View,
 			},
-			fail: true,
+			fail:     true,
+			errRegex: "^AWS minting token:.*ttl.*greater than.*$",
 		},
 		{
 			name: "redshift access token",
@@ -149,15 +165,24 @@ func TestAwsAdapter(t *testing.T) {
 		},
 	}
 	for _, test := range tests {
-		result, err := aws.MintToken(context.Background(), test.input)
-		if test.fail != (err != nil) {
-			t.Fatalf("test %q error mismatch: want error %v, got error %v", test.name, test.fail, err)
-		}
-		if err != nil {
-			continue
-		}
-		if len(result.Credentials) == 0 || len(result.Credentials["account"]) == 0 {
-			t.Errorf("test %q credentials mismatch: want non-empty, got empty", test.name)
-		}
+		t.Run(test.name, func(t *testing.T) {
+
+			pattern, err := regexp.Compile(test.errRegex)
+			if err != nil {
+				t.Fatalf("test %q errRegex %q invalid, got error %v", test.name, test.errRegex, err)
+			}
+
+			result, err := aws.MintToken(context.Background(), test.input)
+			if test.fail && err != nil && !pattern.MatchString(err.Error()) {
+				t.Fatalf("test %q error mismatch:\n\twant error matching pattern: %s\n\tgot error: %v", test.name, test.errRegex, err)
+			}
+
+			if err != nil {
+				return
+			}
+			if len(result.Credentials) == 0 || len(result.Credentials["account"]) == 0 {
+				t.Errorf("test %q credentials mismatch: want non-empty, got empty", test.name)
+			}
+		})
 	}
 }

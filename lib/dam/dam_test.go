@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -1191,8 +1192,8 @@ func TestCheckAuthorization_ResourceNotFound(t *testing.T) {
 	if status.Code(err) != codes.NotFound {
 		t.Errorf("checkAuthorization(ctx, id, %v, %q, %q, %q, cfg, %q) failed, expected %d, got: %v", auth.ttl, auth.resource, auth.view, auth.role, test.TestClientID, codes.NotFound, err)
 	}
-	if errutil.ErrorReason(err) != errResourceNotFoound {
-		t.Errorf("errutil.ErrorReason() = %s want %s", errutil.ErrorReason(err), errResourceNotFoound)
+	if errutil.ErrorReason(err) != errResourceNotFound {
+		t.Errorf("errutil.ErrorReason() = %s want %s", errutil.ErrorReason(err), errResourceNotFound)
 	}
 }
 
@@ -1209,8 +1210,8 @@ func TestCheckAuthorization_ResourceViewNotFoound(t *testing.T) {
 	if status.Code(err) != codes.NotFound {
 		t.Errorf("checkAuthorization(ctx, id, %v, %q, %q, %q, cfg, %q) failed, expected %d, got: %v", auth.ttl, auth.resource, auth.view, auth.role, test.TestClientID, codes.NotFound, err)
 	}
-	if errutil.ErrorReason(err) != errResourceViewNotFoound {
-		t.Errorf("errutil.ErrorReason() = %s want %s", errutil.ErrorReason(err), errResourceViewNotFoound)
+	if errutil.ErrorReason(err) != errResourceViewNotFound {
+		t.Errorf("errutil.ErrorReason() = %s want %s", errutil.ErrorReason(err), errResourceViewNotFound)
 	}
 }
 
@@ -2428,8 +2429,27 @@ func TestLoggedIn_Hydra_Error_Log(t *testing.T) {
 	if got.Labels["error_type"] != errRejectedPolicy {
 		t.Errorf("Labels[pass_auth_check] = %s want %s", got.Labels["error_type"], errRejectedPolicy)
 	}
-	if got.GetJsonPayload() == nil {
-		t.Errorf("got.GetJsonPayload() want not nil")
+
+	if len(got.GetTextPayload()) == 0 {
+		t.Errorf("got.GetTextPayload() want not empty")
+	}
+
+	wantRejectedPolicy := &cpb.RejectedPolicy{
+		RequestedResource: "ga4gh-apis/gcs_read/viewer",
+		PolicyBasis:       []string{"ResearcherStatus", "AcceptedTermsAndPolicies"},
+		Message:           "this passport is missing one or more visas required to meet the policy for the requested resource",
+	}
+
+	gotRejectedPolicy := &cpb.RejectedPolicy{}
+	if err := jsonpb.UnmarshalString(got.GetTextPayload(), gotRejectedPolicy); err != nil {
+		t.Fatalf("Unmarshal() failed: %v", err)
+	}
+
+	sort.Strings(wantRejectedPolicy.PolicyBasis)
+	sort.Strings(gotRejectedPolicy.PolicyBasis)
+
+	if d := cmp.Diff(wantRejectedPolicy, gotRejectedPolicy, protocmp.Transform()); len(d) > 0 {
+		t.Errorf("RejectedPolicy (-want, +got): %s", d)
 	}
 }
 
@@ -2475,7 +2495,7 @@ func TestLoggedIn_Endpoint_Hydra_Success(t *testing.T) {
 	}
 }
 
-func sendHydraConsent(t *testing.T, s *Service, h *fakehydra.Server, dataset bool, stateID string) *http.Response {
+func sendHydraConsent(t *testing.T, s *Service, h *fakehydra.Server, dataset bool, stateID, realm string) *http.Response {
 	t.Helper()
 
 	// Ensure login state exists before request.
@@ -2484,7 +2504,7 @@ func sendHydraConsent(t *testing.T, s *Service, h *fakehydra.Server, dataset boo
 		ConsentChallenge:  consentChallenge,
 		Ttl:               int64(time.Hour),
 		Broker:            testBroker,
-		Realm:             storage.DefaultRealm,
+		Realm:             realm,
 		RequestedAudience: []string{"cid"},
 		RequestedScope:    []string{"openid"},
 		ClientId:          "cid",
@@ -2579,7 +2599,7 @@ func TestHydraConsent(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			resp := sendHydraConsent(t, s, h, tc.datasetToken, consentStateID)
+			resp := sendHydraConsent(t, s, h, tc.datasetToken, consentStateID, "test")
 
 			if resp.StatusCode != http.StatusOK {
 				t.Errorf("resp.StatusCode wants %d got %d", http.StatusOK, resp.StatusCode)
@@ -2621,12 +2641,12 @@ func TestHydraConsent_HasRemembered(t *testing.T) {
 		ReleaseType:      cspb.RememberedConsentPreference_ANYTHING_NEEDED,
 	}
 
-	err = s.store.Write(storage.RememberedConsentDatatype, storage.DefaultRealm, "sub", "sub", storage.LatestRev, rcp, nil)
+	err = s.store.Write(storage.RememberedConsentDatatype, "test", "sub", "sub", storage.LatestRev, rcp, nil)
 	if err != nil {
 		t.Fatalf("write remember consent failed: %v", err)
 	}
 
-	resp := sendHydraConsent(t, s, h, true, consentStateID)
+	resp := sendHydraConsent(t, s, h, true, consentStateID, "test")
 
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Errorf("resp.StatusCode wants %d got %d", http.StatusSeeOther, resp.StatusCode)
@@ -2658,7 +2678,7 @@ func TestHydraConsent_skipPage(t *testing.T) {
 	}
 	s.skipInformationReleasePage = true
 
-	resp := sendHydraConsent(t, s, h, true, consentStateID)
+	resp := sendHydraConsent(t, s, h, true, consentStateID, "test")
 
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Errorf("resp.StatusCode wants %d got %d", http.StatusSeeOther, resp.StatusCode)
@@ -2690,7 +2710,7 @@ func TestHydraConsent_Endpoint_skipPage(t *testing.T) {
 	}
 	s.skipInformationReleasePage = true
 
-	resp := sendHydraConsent(t, s, h, false, consentStateID)
+	resp := sendHydraConsent(t, s, h, false, consentStateID, "test")
 
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Errorf("resp.StatusCode wants %d got %d", http.StatusSeeOther, resp.StatusCode)
@@ -2728,7 +2748,7 @@ func TestHydraConsent_Error(t *testing.T) {
 			s.skipInformationReleasePage = skipPage
 			h.Clear()
 
-			resp := sendHydraConsent(t, s, h, true, "")
+			resp := sendHydraConsent(t, s, h, true, "", "test")
 
 			if resp.StatusCode != http.StatusSeeOther {
 				t.Errorf("resp.StatusCode = %d, wants %d", resp.StatusCode, http.StatusSeeOther)
@@ -2741,7 +2761,7 @@ func TestHydraConsent_Error(t *testing.T) {
 	}
 }
 
-func sendAcceptInformationRelease(t *testing.T, s *Service, h *fakehydra.Server, reqState string, dataset, remember bool) *http.Response {
+func sendAcceptInformationRelease(t *testing.T, s *Service, h *fakehydra.Server, reqState, realm string, dataset, remember bool) *http.Response {
 	t.Helper()
 
 	h.AcceptConsentResp = &hydraapi.RequestHandlerResponse{RedirectTo: hydraPublicURL}
@@ -2751,7 +2771,7 @@ func sendAcceptInformationRelease(t *testing.T, s *Service, h *fakehydra.Server,
 		ConsentChallenge:  consentChallenge,
 		Ttl:               int64(time.Hour),
 		Broker:            testBroker,
-		Realm:             storage.DefaultRealm,
+		Realm:             realm,
 		RequestedAudience: []string{"cid"},
 		RequestedScope:    []string{"openid"},
 		ClientId:          "cid",
@@ -2762,7 +2782,7 @@ func sendAcceptInformationRelease(t *testing.T, s *Service, h *fakehydra.Server,
 		state.Type = pb.ResourceTokenRequestState_DATASET
 		state.Resources = []*pb.ResourceTokenRequestState_Resource{
 			{
-				Realm:    storage.DefaultRealm,
+				Realm:    realm,
 				Resource: "ga4gh-apis",
 				View:     "gcs_read",
 				Role:     "viewer",
@@ -2861,7 +2881,7 @@ func TestAcceptInformationRelease(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			resp := sendAcceptInformationRelease(t, s, h, consentStateID, tc.dataset, tc.remember)
+			resp := sendAcceptInformationRelease(t, s, h, consentStateID, "test", tc.dataset, tc.remember)
 			if resp.StatusCode != http.StatusSeeOther {
 				t.Errorf("resp.StatusCode = %d, wants %d", resp.StatusCode, http.StatusSeeOther)
 			}
@@ -2886,7 +2906,7 @@ func TestAcceptInformationRelease(t *testing.T) {
 			}
 
 			rcp := &cspb.RememberedConsentPreference{}
-			err = s.store.Read(storage.RememberedConsentDatatype, storage.DefaultRealm, "sub", "sub", storage.LatestRev, rcp)
+			err = s.store.Read(storage.RememberedConsentDatatype, "test", "sub", "sub", storage.LatestRev, rcp)
 			if tc.remember {
 				if err != nil {
 					t.Errorf("read RememberedConsent failed: %v", err)
@@ -2906,7 +2926,7 @@ func TestAcceptInformationRelease_Err(t *testing.T) {
 		t.Fatalf("setupHydraTest() failed: %v", err)
 	}
 
-	resp := sendAcceptInformationRelease(t, s, h, "", false, false)
+	resp := sendAcceptInformationRelease(t, s, h, "", "test", false, false)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("resp.StatusCode = %d, wants %d", resp.StatusCode, http.StatusBadRequest)
 	}

@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package aws abstracts interacting with certain aspects of AWS,
-// such as creating IAM roles and user, account keys, and access tokens.
 package aws
 
 import (
@@ -25,7 +23,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws" /* copybara-comment */
 
-	v1 "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/dam/v1"
+	pb "github.com/GoogleCloudPlatform/healthcare-federated-access-services/proto/dam/v1" /* copybara-comment: go_proto */
 )
 
 // end Mock AWS Client
@@ -46,14 +44,14 @@ func NewMockBucketParams(ttl time.Duration, paths *string) *ResourceParams {
 		DamResourceID:         "res-id",
 		DamViewID:             "view-id",
 		DamRoleID:             "role-id",
-		ServiceTemplate:       &v1.ServiceTemplate{ServiceName: "s3bucket"},
+		ServiceTemplate:       &pb.ServiceTemplate{ServiceName: "s3bucket"},
 	}
 }
 
 func NewMockRedshiftParams(ttl time.Duration) *ResourceParams {
 	vars := map[string]string{
 		"cluster": "arn:aws:redshift:us-east-1:12345678:cluster:test-cluster",
-		"group": "arn:aws:redshift:us-east-1:12345678:dbgroup:test-cluster/admin",
+		"group":   "arn:aws:redshift:us-east-1:12345678:dbgroup:test-cluster/admin",
 	}
 	roles := []string{
 		"redshift:GetClusterCredentials",
@@ -72,7 +70,7 @@ func NewMockRedshiftParams(ttl time.Duration) *ResourceParams {
 		DamResourceID:         "res-id",
 		DamViewID:             "view-id",
 		DamRoleID:             "role-id",
-		ServiceTemplate:       &v1.ServiceTemplate{ServiceName: "redshift"},
+		ServiceTemplate:       &pb.ServiceTemplate{ServiceName: "redshift"},
 	}
 }
 
@@ -196,7 +194,7 @@ func TestAWS_MintTokenWithLongLivedTTL_Bucket(t *testing.T) {
 	apiClient := NewMockAPIClient(awsAccount, damPrincipalID)
 	wh, _ := NewWarehouse(context.Background(), apiClient)
 	// AWS has 12-hour threshold for role access tokens
-	params := NewMockBucketParams(13 * time.Hour, nil)
+	params := NewMockBucketParams(13*time.Hour, nil)
 
 	result, err := wh.MintTokenWithTTL(context.Background(), params)
 
@@ -227,7 +225,7 @@ func TestAWS_MintTokenWithHumanAccess_Bucket(t *testing.T) {
 	damPrincipalID := "dam-user-id"
 	apiClient := NewMockAPIClient(awsAccount, damPrincipalID)
 	wh, _ := NewWarehouse(context.Background(), apiClient)
-	params := NewMockBucketParams(1 * time.Hour, nil)
+	params := NewMockBucketParams(1*time.Hour, nil)
 	params.DamInterfaceID = HumanInterfacePrefix + "s3"
 
 	result, err := wh.MintTokenWithTTL(context.Background(), params)
@@ -243,7 +241,7 @@ func TestAWS_MintTokenWithHumanAccessConsecutively_Bucket(t *testing.T) {
 	damPrincipalID := "dam-user-id"
 	apiClient := NewMockAPIClient(awsAccount, damPrincipalID)
 	wh, _ := NewWarehouse(context.Background(), apiClient)
-	params := NewMockBucketParams(1 * time.Hour, nil)
+	params := NewMockBucketParams(1*time.Hour, nil)
 	params.DamInterfaceID = HumanInterfacePrefix + "s3"
 
 	expectedUserName := "ic_abc123@" + damPrincipalID
@@ -266,7 +264,7 @@ func TestAWS_ManageAccountKeys_BelowMax(t *testing.T) {
 	wh, _ := NewWarehouse(context.Background(), apiClient)
 
 	// AWS has 12-hour threshold for role access tokens
-	params := NewMockBucketParams(13 * time.Hour, nil)
+	params := NewMockBucketParams(13*time.Hour, nil)
 	for i := 0; i < params.ManagedKeysPerAccount; i++ {
 		_, err := wh.MintTokenWithTTL(context.Background(), params)
 		if err != nil {
@@ -299,7 +297,7 @@ func TestAWS_ManageAccountKeys_AboveThreshold(t *testing.T) {
 	wh, _ := NewWarehouse(context.Background(), apiClient)
 
 	// AWS has 12-hour threshold for role access tokens
-	params := NewMockBucketParams(13 * time.Hour, nil)
+	params := NewMockBucketParams(13*time.Hour, nil)
 	for i := 0; i < params.ManagedKeysPerAccount; i++ {
 		_, err := wh.MintTokenWithTTL(context.Background(), params)
 		if err != nil {
@@ -348,7 +346,7 @@ func TestAWS_ManageAccountKeys_Expired(t *testing.T) {
 	wh, _ := NewWarehouse(context.Background(), apiClient)
 
 	// AWS has 12-hour threshold for role access tokens
-	params := NewMockBucketParams(13 * time.Hour, nil)
+	params := NewMockBucketParams(13*time.Hour, nil)
 	_, err := wh.MintTokenWithTTL(context.Background(), params)
 	if err != nil {
 		t.Errorf("prerequisite failed: error minting token: %v", err)
@@ -365,7 +363,7 @@ func TestAWS_ManageAccountKeys_Expired(t *testing.T) {
 
 	firstKey := keys[0]
 	now := time.Now()
-	firstKey.CreateDate = aws.Time(now.Add(-1 * (params.MaxKeyTTL+time.Hour)))
+	firstKey.CreateDate = aws.Time(now.Add(-1 * (params.MaxKeyTTL + time.Hour)))
 
 	expectedUserName := "ic_abc123@" + damPrincipalID
 	remaining, removed, err := wh.ManageAccountKeys(context.Background(), "project", expectedUserName, params.TTL, params.MaxKeyTTL, now, int64(params.ManagedKeysPerAccount-1))
@@ -388,6 +386,8 @@ func TestAWS_ManageAccountKeys_Expired(t *testing.T) {
 }
 
 func validateMintedRoleCredentials(t *testing.T, expectedAccount, expectedPrincipal string, result *ResourceTokenResult, err error) {
+	t.Helper()
+
 	if err != nil {
 		t.Errorf("expected minting a token but got error: %v", err)
 		return
@@ -421,6 +421,8 @@ func validateMintedRoleCredentials(t *testing.T, expectedAccount, expectedPrinci
 }
 
 func validateMintedAccessKey(t *testing.T, expectedAccount, expectedPrincipal string, result *ResourceTokenResult, err error) {
+	t.Helper()
+
 	if err != nil {
 		t.Errorf("expected minting a token but got error: %v", err)
 		return
@@ -452,6 +454,8 @@ func validateMintedAccessKey(t *testing.T, expectedAccount, expectedPrincipal st
 }
 
 func validateMintedUsernamePassword(t *testing.T, expectedAccount, expectedPrincipalARN, expectedUserName string, result *ResourceTokenResult, err error) {
+	t.Helper()
+
 	if err != nil {
 		t.Errorf("expected minting a token but got error: %v", err)
 		return
@@ -478,6 +482,8 @@ func validateMintedUsernamePassword(t *testing.T, expectedAccount, expectedPrinc
 }
 
 func validateCreatedRolePolicy(t *testing.T, apiClient *MockAwsClient, expectedRoleName string, targetRoles []string) {
+	t.Helper()
+
 	if len(apiClient.Roles) != 1 {
 		t.Fatalf("expected a single role to be created but found %v", apiClient.Roles)
 	} else {
@@ -502,6 +508,8 @@ func validateCreatedRolePolicy(t *testing.T, apiClient *MockAwsClient, expectedR
 }
 
 func validatePolicyDoc(t *testing.T, targetRoles []string, policyDoc *string) {
+	t.Helper()
+
 	if policyDoc == nil {
 		t.Fatalf("expected a policy doc but none found")
 	}
@@ -516,6 +524,8 @@ func validatePolicyDoc(t *testing.T, targetRoles []string, policyDoc *string) {
 }
 
 func validatePolicyResourceARNs(t *testing.T, expectedResourceARNs []string, policyDoc *string) {
+	t.Helper()
+
 	if policyDoc == nil {
 		t.Errorf("expected a session policy but none found")
 		return
@@ -531,6 +541,8 @@ func validatePolicyResourceARNs(t *testing.T, expectedResourceARNs []string, pol
 }
 
 func validateCreatedUserPolicy(t *testing.T, apiClient *MockAwsClient, expectedUserName string, targetRoles []string) {
+	t.Helper()
+
 	if len(apiClient.Users) != 1 {
 		t.Errorf("expected a single user to be created but found %v", apiClient.Users)
 	} else {

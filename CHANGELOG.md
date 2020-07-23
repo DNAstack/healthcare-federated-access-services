@@ -2,7 +2,16 @@
 
 ## [Unreleased](https://github.com/GoogleCloudPlatform/healthcare-federated-access-services/tree/HEAD)
 
-[Full Changelog](https://github.com/GoogleCloudPlatform/healthcare-federated-access-services/compare/v0.9.7...HEAD)
+[Full Changelog](https://github.com/GoogleCloudPlatform/healthcare-federated-access-services/compare/v0.9.8...HEAD)
+
+## [v0.9.8](https://github.com/GoogleCloudPlatform/healthcare-federated-access-services/tree/v0.9.8)
+
+[Full Changelog](https://github.com/GoogleCloudPlatform/healthcare-federated-access-services/compare/v0.9.7...v0.9.8)
+
+** Highlight Updates**
+
+* Add localeMetadata endpoints on DAM and IC to list canonical choices to aid
+  with UI selection on the user profile page.
 
 ## [v0.9.7](https://github.com/GoogleCloudPlatform/healthcare-federated-access-services/tree/v0.9.7)
 

@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package aws abstracts interacting with certain aspects of AWS,
-// such as creating IAM roles and user, account keys, and access tokens.
 package aws
 
 import (
@@ -122,7 +120,7 @@ type fullLoginProfile struct {
 	password     *string
 }
 
-// Mock AWS Client
+// MockAwsClient for testing
 type MockAwsClient struct {
 	Account          string
 	UserID           string
@@ -135,6 +133,7 @@ type MockAwsClient struct {
 	FullLoginProfile []*fullLoginProfile
 }
 
+// CreateLoginProfile ...
 func (m *MockAwsClient) CreateLoginProfile(input *iam.CreateLoginProfileInput) (*iam.CreateLoginProfileOutput, error) {
 	if _, err := m.GetLoginProfile(&iam.GetLoginProfileInput{UserName: input.UserName}); err == nil {
 		return nil, awserr.New(iam.ErrCodeEntityAlreadyExistsException, "should not depend on this", nil)
@@ -156,6 +155,7 @@ func (m *MockAwsClient) CreateLoginProfile(input *iam.CreateLoginProfileInput) (
 	}, nil
 }
 
+// UpdateLoginProfile ...
 func (m *MockAwsClient) UpdateLoginProfile(input *iam.UpdateLoginProfileInput) (*iam.UpdateLoginProfileOutput, error) {
 	for _, flp := range m.FullLoginProfile {
 		if *flp.loginProfile.UserName == *input.UserName {
@@ -168,6 +168,7 @@ func (m *MockAwsClient) UpdateLoginProfile(input *iam.UpdateLoginProfileInput) (
 	return nil, awserr.New(iam.ErrCodeNoSuchEntityException, "shouldn't rely on this", nil)
 }
 
+// GetLoginProfile ...
 func (m *MockAwsClient) GetLoginProfile(input *iam.GetLoginProfileInput) (*iam.GetLoginProfileOutput, error) {
 	for _, flp := range m.FullLoginProfile {
 		if *flp.loginProfile.UserName == *input.UserName {
