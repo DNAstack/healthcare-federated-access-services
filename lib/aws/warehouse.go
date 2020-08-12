@@ -49,6 +49,7 @@ const (
 	RedshiftConsoleItemFormat = "redshift-console"
 	// HumanInterfacePrefix is the canonical prefix for interface URNs that grant console access to AWS resources.
 	HumanInterfacePrefix = "web:aws:"
+	damUserPathPrefix    = "/dam/"
 )
 
 type principalType int
@@ -182,9 +183,8 @@ func (wh *AccountWarehouse) GetServiceAccounts(ctx context.Context, _ string) (<
 			}
 			return nil
 		}
-		// TODO: get PathPrefix from config
 		accounts, err := wh.apiClient.ListUsers(&iam.ListUsersInput{
-			PathPrefix: aws.String("/ddap/"),
+			PathPrefix: aws.String(damUserPathPrefix),
 		})
 		if err != nil {
 			glog.Errorf("getting users list: %v", err)
@@ -582,8 +582,7 @@ func (wh *AccountWarehouse) determinePrincipalSpec(credSpec *credentialSpec) *pr
 		damPrincipalUserName: wh.svcUserName,
 		account:              wh.account,
 		params:               params,
-		// TODO: Make prefix configurable for different dam deployments
-		path: "/ddap/",
+		path: damUserPathPrefix,
 	}
 
 	if credSpec.cType == temporaryKey {

@@ -96,7 +96,7 @@ func TestAWS_MintTokenWithShortLivedTTL_Bucket(t *testing.T) {
 	result, err := wh.MintTokenWithTTL(context.Background(), params)
 
 	expectedRoleName := fmt.Sprintf("%s,%s,%s@%s", params.DamResourceID, params.DamViewID, params.DamRoleID, damPrincipalID)
-	expectedRoleArn := fmt.Sprintf("arn:aws:iam::%s:role/ddap/%s", awsAccount, expectedRoleName)
+	expectedRoleArn := fmt.Sprintf("arn:aws:iam::%s:role/dam/%s", awsAccount, expectedRoleName)
 	validateMintedRoleCredentials(t, awsAccount, expectedRoleArn, result, err)
 	validateCreatedRolePolicy(t, apiClient, expectedRoleName, params.TargetRoles)
 }
@@ -111,7 +111,7 @@ func TestAWS_MintTokenWithShortLivedTTL_BucketWithUndefinedPaths(t *testing.T) {
 	result, err := wh.MintTokenWithTTL(context.Background(), params)
 
 	expectedRoleName := fmt.Sprintf("%s,%s,%s@%s", params.DamResourceID, params.DamViewID, params.DamRoleID, damPrincipalID)
-	expectedRoleArn := fmt.Sprintf("arn:aws:iam::%s:role/ddap/%s", awsAccount, expectedRoleName)
+	expectedRoleArn := fmt.Sprintf("arn:aws:iam::%s:role/dam/%s", awsAccount, expectedRoleName)
 	validateMintedRoleCredentials(t, awsAccount, expectedRoleArn, result, err)
 	validateCreatedRolePolicy(t, apiClient, expectedRoleName, params.TargetRoles)
 
@@ -137,7 +137,7 @@ func TestAWS_MintTokenWithShortLivedTTL_BucketWithDefinedPaths(t *testing.T) {
 	result, err := wh.MintTokenWithTTL(context.Background(), params)
 
 	expectedRoleName := fmt.Sprintf("%s,%s,%s@%s", params.DamResourceID, params.DamViewID, params.DamRoleID, damPrincipalID)
-	expectedRoleArn := fmt.Sprintf("arn:aws:iam::%s:role/ddap/%s", awsAccount, expectedRoleName)
+	expectedRoleArn := fmt.Sprintf("arn:aws:iam::%s:role/dam/%s", awsAccount, expectedRoleName)
 	validateMintedRoleCredentials(t, awsAccount, expectedRoleArn, result, err)
 	validateCreatedRolePolicy(t, apiClient, expectedRoleName, params.TargetRoles)
 
@@ -160,7 +160,7 @@ func TestAWS_MintTokenWithShortLivedTTL_Redshift(t *testing.T) {
 	result, err := wh.MintTokenWithTTL(context.Background(), params)
 
 	expectedRoleName := fmt.Sprintf("%s,%s,%s@%s", params.DamResourceID, params.DamViewID, params.DamRoleID, damPrincipalID)
-	expectedRoleArn := fmt.Sprintf("arn:aws:iam::%s:role/ddap/%s", awsAccount, expectedRoleName)
+	expectedRoleArn := fmt.Sprintf("arn:aws:iam::%s:role/dam/%s", awsAccount, expectedRoleName)
 	validateMintedRoleCredentials(t, awsAccount, expectedRoleArn, result, err)
 	validateCreatedRolePolicy(t, apiClient, expectedRoleName, params.TargetRoles)
 
