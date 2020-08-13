@@ -22,51 +22,63 @@ import (
 
 	"google.golang.org/grpc/codes" /* copybara-comment */
 	"google.golang.org/grpc/status" /* copybara-comment */
+	"gopkg.in/square/go-jose.v2/jwt" /* copybara-comment */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/errutil" /* copybara-comment: errutil */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh" /* copybara-comment: ga4gh */
 )
 
 // PassportVerifier verifies passport tokens.
 type PassportVerifier struct {
-	sig *oidcSigVerifier
+	tok *oidcJwtSigVerifier
 	aud *passportAudienceVerifier
 }
 
 // Verify verifies signature, timestamp, issuer and audiences in passport token.
 func (s *PassportVerifier) Verify(ctx context.Context, token string) error {
-	return verify(ctx, s.sig, s.aud, token, "")
+	return verify(ctx, s.tok, s.aud, token, nil)
 }
 
 // VisaVerifier verifies visa tokens.
 type VisaVerifier struct {
-	sig sigVerifier
+	tok extractClaimsAndVerifyToken
 	aud *visaAudienceVerifier
 }
 
 // Verify signature, timestamp, issuer, jku and audiences in visa token.
 func (s *VisaVerifier) Verify(ctx context.Context, token, jku string) error {
 	if len(jku) > 0 {
-		if _, ok := s.sig.(*jkuSigVerifier); !ok {
-			return errutil.WithErrorReason(errVerifierInvalidType, status.Errorf(codes.Internal, "sigVerifier type must be oidc verifier"))
+		if _, ok := s.tok.(*jkuVisaSigVerifier); !ok {
+			return errutil.WithErrorReason(errVerifierInvalidType, status.Errorf(codes.Internal, "extractClaimsAndVerifyToken type must be an oidc verifier"))
 		}
 	} else {
-		if _, ok := s.sig.(*oidcSigVerifier); !ok {
-			return errutil.WithErrorReason(errVerifierInvalidType, status.Errorf(codes.Internal, "sigVerifier type must be oidc verifier"))
+		if _, ok := s.tok.(*oidcJwtSigVerifier); !ok {
+			return errutil.WithErrorReason(errVerifierInvalidType, status.Errorf(codes.Internal, "extractClaimsAndVerifyToken type must be an oidc verifier"))
 		}
 	}
 
-	return verify(ctx, s.sig, s.aud, token, jku)
+	return verify(ctx, s.tok, s.aud, token, nil)
 }
 
-// AccessTokenVerifier verifies access tokens, used in lib/auth.
-type AccessTokenVerifier struct {
-	sig *oidcSigVerifier
+// JWTAccessTokenVerifier verifies jwt access tokens, used in lib/auth.
+type JWTAccessTokenVerifier struct {
+	tok *oidcJwtSigVerifier
 	aud *accessTokenAudienceVerifier
 }
 
-// Verify verifies signature, timestamp, issuer and audiences in access token.
-func (s *AccessTokenVerifier) Verify(ctx context.Context, token string, opt Option) error {
-	return verify(ctx, s.sig, s.aud, token, "", opt)
+// Verify verifies signature, timestamp, issuer and audiences in access tok.
+func (s *JWTAccessTokenVerifier) Verify(ctx context.Context, token string, claims interface{}, opt Option) error {
+	return verify(ctx, s.tok, s.aud, token, claims, opt)
+}
+
+// UserinfoAccesssTokenVerifier verifies access tokens with userinfo endpoint, used in lib/auth.
+type UserinfoAccesssTokenVerifier struct {
+	tok *oidcOpaqueUserinfoVerifier
+	aud *accessTokenAudienceVerifier
+}
+
+// Verify verifies signature, timestamp, issuer and audiences of access token with userinfo.
+func (s *UserinfoAccesssTokenVerifier) Verify(ctx context.Context, token string, claims interface{}, opt Option) error {
+	return verify(ctx, s.tok, s.aud, token, claims, opt)
 }
 
 // NewVisaVerifier creates a visa token verifier.
@@ -75,12 +87,12 @@ func NewVisaVerifier(ctx context.Context, issuer, jku, prefix string) (*VisaVeri
 		aud: &visaAudienceVerifier{prefix: prefix},
 	}
 	if len(jku) > 0 {
-		v.sig = newJKUJWTVerifier(ctx, issuer, jku)
+		v.tok = newJkuVisaSigVerifier(ctx, issuer, jku)
 		return v, nil
 	}
 
 	var err error
-	v.sig, err = newOIDCSigVerifier(ctx, issuer)
+	v.tok, err = newOIDCSigVerifier(ctx, issuer)
 	if err != nil {
 		return nil, err
 	}
@@ -89,56 +101,73 @@ func NewVisaVerifier(ctx context.Context, issuer, jku, prefix string) (*VisaVeri
 
 // NewPassportVerifier creates a passport token verifier.
 func NewPassportVerifier(ctx context.Context, issuer, clientID string) (*PassportVerifier, error) {
-	sig, err := newOIDCSigVerifier(ctx, issuer)
+	tok, err := newOIDCSigVerifier(ctx, issuer)
 	if err != nil {
 		return nil, err
 	}
 
 	return &PassportVerifier{
-		sig: sig,
+		tok: tok,
 		aud: &passportAudienceVerifier{
 			clientID: clientID,
 		},
 	}, nil
 }
 
-// NewAccessTokenVerifier creates a access token verifier.
-func NewAccessTokenVerifier(ctx context.Context, issuer string) (*AccessTokenVerifier, error) {
-	sig, err := newOIDCSigVerifier(ctx, issuer)
+// AccessTokenVerifier verifies jwt access tokens or access token to userinfo, used in lib/auth.
+type AccessTokenVerifier interface {
+	Verify(ctx context.Context, token string, claims interface{}, opt Option) error
+}
+
+// NewAccessTokenVerifier creates a access tok verifier.
+func NewAccessTokenVerifier(ctx context.Context, issuer string, useUserinfoVerifier bool) (AccessTokenVerifier, error) {
+	if useUserinfoVerifier {
+		tok, err := newOIDCUserinfoVerifier(ctx, issuer)
+		if err != nil {
+			return nil, err
+		}
+		return &UserinfoAccesssTokenVerifier{
+			tok: tok,
+			aud: &accessTokenAudienceVerifier{},
+		}, nil
+	}
+
+	tok, err := newOIDCSigVerifier(ctx, issuer)
 	if err != nil {
 		return nil, err
 	}
 
-	return &AccessTokenVerifier{
-		sig: sig,
+	return &JWTAccessTokenVerifier{
+		tok: tok,
 		aud: &accessTokenAudienceVerifier{},
 	}, nil
 }
 
-// sigVerifier is used to verify tokens.
-type sigVerifier interface {
+// extractClaimsAndVerifyToken is used to verify tokens.
+type extractClaimsAndVerifyToken interface {
+	// PreviewClaimsBeforeVerification from the given tok, will also extracts to custom claim object if claims passed in.
+	// Claims will be unsafe for jwt token, and claims will be safe if fetched from the userinfo endpoint.
+	// This function need to be called before VerifySig().
+	PreviewClaimsBeforeVerification(ctx context.Context, token string, claims interface{}) (*ga4gh.StdClaims, error)
+	// VerifySig of the access tok, it will be empty if not jwt tok.
 	VerifySig(ctx context.Context, token string) error
+	// Issuer the wanted issuer of the tok.
 	Issuer() string
-	JKU() string
 }
 
 // verify verifies the provided token.
-func verify(ctx context.Context, sig sigVerifier, aud audienceVerifier, token, jku string, opts ...Option) error {
-	d, err := ga4gh.NewStdClaimsFromJWT(token)
+func verify(ctx context.Context, tokenVerifier extractClaimsAndVerifyToken, aud audienceVerifier, token string, claims interface{}, opts ...Option) error {
+	d, err := tokenVerifier.PreviewClaimsBeforeVerification(ctx, token, claims)
 	if err != nil {
-		return errutil.WithErrorReason(errParseFailed, status.Errorf(codes.Unauthenticated, "NewStdClaimsFromJWT() failed: %v", err))
+		return err
 	}
 
 	if len(d.Subject) == 0 {
-		return errutil.WithErrorReason(errSubMissing, status.Errorf(codes.Unauthenticated, "Issuer in token does not match issuer in sig"))
+		return errutil.WithErrorReason(errSubMissing, status.Errorf(codes.Unauthenticated, "Issuer in tok does not match issuer in tokenVerifier"))
 	}
 
-	if normalizeIssuer(d.Issuer) != normalizeIssuer(sig.Issuer()) {
-		return errutil.WithErrorReason(errIssuerNotMatch, status.Errorf(codes.Unauthenticated, "Issuer in token does not match issuer in sig"))
-	}
-
-	if jku != sig.JKU() {
-		return errutil.WithErrorReason(errJKUNotMatch, status.Errorf(codes.Internal, "Issuer in token does not match issuer in sig"))
+	if normalizeIssuer(d.Issuer) != normalizeIssuer(tokenVerifier.Issuer()) {
+		return errutil.WithErrorReason(errIssuerNotMatch, status.Errorf(codes.Unauthenticated, "Issuer in tok does not match issuer in tokenVerifier"))
 	}
 
 	if err := aud.Verify(d, opts...); err != nil {
@@ -147,18 +176,18 @@ func verify(ctx context.Context, sig sigVerifier, aud audienceVerifier, token, j
 
 	now := time.Now().Unix()
 	if now > d.ExpiresAt {
-		return errutil.WithErrorReason(errExpired, status.Errorf(codes.Unauthenticated, "token expired"))
+		return errutil.WithErrorReason(errExpired, status.Errorf(codes.Unauthenticated, "tok expired"))
 	}
 
 	if now < d.NotBefore {
-		return errutil.WithErrorReason(errFutureToken, status.Errorf(codes.Unauthenticated, "future token: token is not valid yet"))
+		return errutil.WithErrorReason(errFutureToken, status.Errorf(codes.Unauthenticated, "future tok: tok is not valid yet"))
 	}
 
 	if now < d.IssuedAt {
-		return errutil.WithErrorReason(errFutureToken, status.Errorf(codes.Unauthenticated, "future token: token used before issued"))
+		return errutil.WithErrorReason(errFutureToken, status.Errorf(codes.Unauthenticated, "future tok: tok used before issued"))
 	}
 
-	if err := sig.VerifySig(ctx, token); err != nil {
+	if err := tokenVerifier.VerifySig(ctx, token); err != nil {
 		return errutil.WithErrorReason(errInvalidSignature, status.Errorf(codes.Unauthenticated, "%v", err))
 	}
 
@@ -173,4 +202,18 @@ func normalizeIssuer(issuer string) string {
 // Option for verifies tokens.
 type Option interface {
 	isOption()
+}
+
+// unsafeClaimsFromJWTToken extracts custom claims from jwt body.
+func unsafeClaimsFromJWTToken(token string, obj interface{}) error {
+	tok, err := jwt.ParseSigned(token)
+	if err != nil {
+		return errutil.WithErrorReason(errParseFailed, status.Errorf(codes.Unauthenticated, "ParseSigned() failed: %v", err))
+	}
+
+	if err := tok.UnsafeClaimsWithoutVerification(obj); err != nil {
+		return errutil.WithErrorReason(errParseFailed, status.Errorf(codes.Unauthenticated, "UnsafeClaimsWithoutVerification() failed: %v", err))
+	}
+
+	return nil
 }

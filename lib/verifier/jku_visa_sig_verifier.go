@@ -17,33 +17,49 @@ package verifier
 import (
 	"context"
 
+	"google.golang.org/grpc/codes" /* copybara-comment */
+	"google.golang.org/grpc/status" /* copybara-comment */
 	"github.com/coreos/go-oidc" /* copybara-comment */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/errutil" /* copybara-comment: errutil */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh" /* copybara-comment: ga4gh */
 )
 
-type jkuSigVerifier struct {
+type jkuVisaSigVerifier struct {
 	issuer string
 	jku    string
 	keyset oidc.KeySet
 }
 
-// newJKUJWTVerifier creates a sigVerifier for jku jwt tokens.
-func newJKUJWTVerifier(ctx context.Context, issuer, jku string) *jkuSigVerifier {
-	return &jkuSigVerifier{
+// newJkuVisaSigVerifier creates a extractClaimsAndVerifyToken for jku jwt visa tokens.
+func newJkuVisaSigVerifier(ctx context.Context, issuer, jku string) *jkuVisaSigVerifier {
+	return &jkuVisaSigVerifier{
 		issuer: issuer,
 		jku:    jku,
 		keyset: oidc.NewRemoteKeySet(ctx, jku),
 	}
 }
 
-func (s *jkuSigVerifier) VerifySig(ctx context.Context, token string) error {
+func (s *jkuVisaSigVerifier) PreviewClaimsBeforeVerification(ctx context.Context, token string, claims interface{}) (*ga4gh.StdClaims, error) {
+	// extracts the unsafe claims here to allow following step to validate issue, timestamp.
+	d, err := ga4gh.NewStdClaimsFromJWT(token)
+	if err != nil {
+		return nil, errutil.WithErrorReason(errParseFailed, status.Errorf(codes.Unauthenticated, "NewStdClaimsFromJWT() failed: %v", err))
+	}
+
+	if claims != nil {
+		if err := unsafeClaimsFromJWTToken(token, claims); err != nil {
+			return nil, err
+		}
+	}
+
+	return d, nil
+}
+
+func (s *jkuVisaSigVerifier) VerifySig(ctx context.Context, token string) error {
 	_, err := s.keyset.VerifySignature(ctx, token)
 	return err
 }
 
-func (s *jkuSigVerifier) Issuer() string {
+func (s *jkuVisaSigVerifier) Issuer() string {
 	return s.issuer
-}
-
-func (s *jkuSigVerifier) JKU() string {
-	return s.jku
 }

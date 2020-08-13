@@ -23,15 +23,16 @@ import (
 	"gopkg.in/square/go-jose.v2/jwt" /* copybara-comment */
 	"github.com/coreos/go-oidc" /* copybara-comment */
 	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/errutil" /* copybara-comment: errutil */
+	"github.com/GoogleCloudPlatform/healthcare-federated-access-services/lib/ga4gh" /* copybara-comment: ga4gh */
 )
 
-type oidcSigVerifier struct {
+type oidcJwtSigVerifier struct {
 	issuer   string
 	verifier *oidc.IDTokenVerifier
 }
 
-// newOIDCSigVerifier creates a new oidc token sigVerifier.
-func newOIDCSigVerifier(ctx context.Context, issuer string) (*oidcSigVerifier, error) {
+// newOIDCSigVerifier creates a new oidc tok extractClaimsAndVerifyToken.
+func newOIDCSigVerifier(ctx context.Context, issuer string) (*oidcJwtSigVerifier, error) {
 	p, err := oidc.NewProvider(ctx, issuer)
 	if err != nil {
 		return nil, errutil.WithErrorReason(errCreateVerifierFailed, status.Errorf(codes.Unavailable, "create oidc failed: %v", err))
@@ -45,13 +46,29 @@ func newOIDCSigVerifier(ctx context.Context, issuer string) (*oidcSigVerifier, e
 		SkipIssuerCheck: true,
 	})
 
-	return &oidcSigVerifier{
+	return &oidcJwtSigVerifier{
 		issuer:   issuer,
 		verifier: v,
 	}, nil
 }
 
-func (s *oidcSigVerifier) VerifySig(ctx context.Context, token string) error {
+func (s *oidcJwtSigVerifier) PreviewClaimsBeforeVerification(ctx context.Context, token string, claims interface{}) (*ga4gh.StdClaims, error) {
+	// extracts the unsafe claims here to allow following step to validate issuer, timestamp.
+	d, err := ga4gh.NewStdClaimsFromJWT(token)
+	if err != nil {
+		return nil, errutil.WithErrorReason(errParseFailed, status.Errorf(codes.Unauthenticated, "NewStdClaimsFromJWT() failed: %v", err))
+	}
+
+	if claims != nil {
+		if err := unsafeClaimsFromJWTToken(token, claims); err != nil {
+			return nil, err
+		}
+	}
+
+	return d, nil
+}
+
+func (s *oidcJwtSigVerifier) VerifySig(ctx context.Context, token string) error {
 	// ensure token does not include a jku header
 	tok, err := jwt.ParseSigned(token)
 	if err != nil {
@@ -70,10 +87,6 @@ func (s *oidcSigVerifier) VerifySig(ctx context.Context, token string) error {
 	return err
 }
 
-func (s *oidcSigVerifier) Issuer() string {
+func (s *oidcJwtSigVerifier) Issuer() string {
 	return s.issuer
-}
-
-func (s *oidcSigVerifier) JKU() string {
-	return ""
 }

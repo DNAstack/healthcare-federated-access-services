@@ -309,7 +309,7 @@ func New(r *mux.Router, params *Options) *Service {
 	}
 
 	a := authChecker{s: s}
-	checker := auth.NewChecker(s.logger, s.getIssuerString(), permissions.New(s.store), a.fetchClientSecrets, a.transformIdentity)
+	checker := auth.NewChecker(s.logger, s.getIssuerString(), permissions.New(s.store), a.fetchClientSecrets, a.transformIdentity, false)
 	s.checker = checker
 
 	go s.lro.Run(ctx)
@@ -1191,7 +1191,8 @@ var (
 		},
 		Ui: map[string]string{
 			"label":       "Allowlist",
-			"description": "Allow users and groups to be allowlisted for access directly without using visas",
+			"description": "Allow users and groups to be given access directly via their email addresses by verifying email properties and/or trusted LinkedIdentity visas available on user tokens",
+			"infoUrl":     "https://github.com/GoogleCloudPlatform/healthcare-federated-access-services/blob/master/docs/dam/admin/config/policies.md#allowlist-policy",
 			"source":      "built-in",
 			"edit":        "immutable",
 		},

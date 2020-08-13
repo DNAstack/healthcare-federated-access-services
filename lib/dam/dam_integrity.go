@@ -135,7 +135,7 @@ func checkBasicIntegrity(cfg *pb.DamConfig, vopts ValidateCfgOpts) *status.Statu
 		}
 		for i, visa := range ts.VisaTypes {
 			if _, ok := cfg.VisaTypes[visa]; !ok {
-				return httputils.NewInfoStatus(codes.InvalidArgument, httputils.StatusPath(cfgTrustedSources, n, "claims", strconv.Itoa(i)), fmt.Sprintf("visa name %q not found in visa type definitions", visa))
+				return httputils.NewInfoStatus(codes.InvalidArgument, httputils.StatusPath(cfgTrustedSources, n, "visaTypes", strconv.Itoa(i)), fmt.Sprintf("visa name %q not found in visa type definitions", visa))
 			}
 		}
 		if path, err := check.CheckUI(ts.Ui, true); err != nil {
@@ -517,6 +517,9 @@ func checkOptionsIntegrity(opts *pb.ConfigOptions, vopts ValidateCfgOpts) *statu
 	}
 	if err := check.CheckStringOption(opts.GcpServiceAccountProject, "gcpServiceAccountProject", opts.ComputedDescriptors); err != nil {
 		return httputils.NewInfoStatus(codes.InvalidArgument, httputils.StatusPath(cfgOptions, "gcpServiceAccountProject"), err.Error())
+	}
+	if err := check.CheckStringOption(opts.GcpIamBillingProject, "gcpIamBillingProject", opts.ComputedDescriptors); err != nil {
+		return httputils.NewInfoStatus(codes.InvalidArgument, httputils.StatusPath(cfgOptions, "gcpIamBillingProject"), err.Error())
 	}
 	return nil
 }
